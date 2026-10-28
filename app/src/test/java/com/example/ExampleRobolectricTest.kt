@@ -2,15 +2,31 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.BudgetEntity
 import com.example.data.model.ExpenseEntity
+import com.example.data.model.RecurringDateUtils
+import com.example.data.model.RecurringExpenseEntity
+import com.example.data.model.RecurringFrequency
+import com.example.data.db.ExpenseDatabase
+import com.example.data.repository.ExpenseRepository
 import com.example.export.ReportExportManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import android.app.NotificationManager
+import com.example.notification.BudgetAlertThreshold
+import com.example.notification.BudgetNotificationService
+import com.example.ui.viewmodel.BudgetProgressItem
 import java.io.FileInputStream
+import java.util.Calendar
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import androidx.room.Room
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -20,7 +36,7 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("Expense Tracker", appName)
+    assertEquals("Track My Rupee", appName)
   }
 
   @Test
@@ -777,6 +793,535 @@ class ExampleRobolectricTest {
     val groceryResponse = service.generateOfflineAdvisorResponse("What about Groceries budget?", jsonPrompt)
     assertTrue("Response should mention Groceries", groceryResponse.contains("Groceries"))
     assertTrue("Response should alert OVER BUDGET", groceryResponse.contains("OVER BUDGET") || groceryResponse.contains("⚠️"))
+  }
+
+  @Test
+  fun `recurringDateUtils computes correct next due dates for daily weekly monthly yearly`() {
+    val cal = Calendar.getInstance().apply {
+      set(2026, Calendar.OCTOBER, 15, 10, 0, 0)
+      set(Calendar.MILLISECOND, 0)
+    }
+    val currentDue = cal.timeInMillis
+
+    // Daily
+    val nextDaily = RecurringDateUtils.calculateNextDueDate("DAILY", currentDue)
+    val dailyCal = Calendar.getInstance().apply { timeInMillis = nextDaily }
+    assertEquals(16, dailyCal.get(Calendar.DAY_OF_MONTH))
+    assertEquals(Calendar.OCTOBER, dailyCal.get(Calendar.MONTH))
+
+    // Weekly
+    val nextWeekly = RecurringDateUtils.calculateNextDueDate("WEEKLY", currentDue)
+    val weeklyCal = Calendar.getInstance().apply { timeInMillis = nextWeekly }
+    assertEquals(22, weeklyCal.get(Calendar.DAY_OF_MONTH))
+
+    // Monthly with dayOfMonth = 5
+    val nextMonthly = RecurringDateUtils.calculateNextDueDate("MONTHLY", currentDue, dayOfMonth = 5)
+    val monthlyCal = Calendar.getInstance().apply { timeInMillis = nextMonthly }
+    assertEquals(5, monthlyCal.get(Calendar.DAY_OF_MONTH))
+    assertEquals(Calendar.NOVEMBER, monthlyCal.get(Calendar.MONTH))
+
+    // Yearly
+    val nextYearly = RecurringDateUtils.calculateNextDueDate("YEARLY", currentDue)
+    val yearlyCal = Calendar.getInstance().apply { timeInMillis = nextYearly }
+    assertEquals(2027, yearlyCal.get(Calendar.YEAR))
+    assertEquals(Calendar.OCTOBER, yearlyCal.get(Calendar.MONTH))
+    assertEquals(15, yearlyCal.get(Calendar.DAY_OF_MONTH))
+  }
+
+  @Test
+  fun `recurringExpenseDao persists, queries due bills, and updates active state in Room DB`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = Room.inMemoryDatabaseBuilder(context, ExpenseDatabase::class.java)
+      .allowMainThreadQueries()
+      .build()
+
+    try {
+      val dao = db.recurringExpenseDao()
+      val now = System.currentTimeMillis()
+
+      val rent = RecurringExpenseEntity(
+        title = "House Rent",
+        amount = 18000.0,
+        category = "Bills & Utilities",
+        frequency = "MONTHLY",
+        dayOfMonth = 1,
+        paymentMethod = "UPI",
+        tag = "Rent",
+        nextDueDate = now - 10000, // Due in the past (due now)
+        isActive = true,
+        autoCreateExpense = true
+      )
+      val netflix = RecurringExpenseEntity(
+        title = "Netflix",
+        amount = 649.0,
+        category = "Entertainment",
+        frequency = "MONTHLY",
+        dayOfMonth = 25,
+        paymentMethod = "Credit Card",
+        tag = "Subscription",
+        nextDueDate = now + 86400000L * 5, // Due in 5 days (not due now)
+        isActive = true,
+        autoCreateExpense = true
+      )
+
+      val rentId = dao.insertRecurringExpense(rent)
+      val netflixId = dao.insertRecurringExpense(netflix)
+
+      val allList = dao.getAllRecurringExpensesList()
+      assertEquals(2, allList.size)
+
+      // Query due expenses
+      val dueExpenses = dao.getDueRecurringExpenses(now)
+      assertEquals(1, dueExpenses.size)
+      assertEquals("House Rent", dueExpenses[0].title)
+
+      // Toggle active state
+      val fetchedRent = dao.getRecurringExpenseById(rentId)
+      assertNotNull(fetchedRent)
+      dao.updateRecurringExpense(fetchedRent!!.copy(isActive = false))
+
+      val updatedDue = dao.getDueRecurringExpenses(now)
+      assertEquals(0, updatedDue.size) // No active due expenses
+
+      // Delete
+      dao.deleteRecurringExpenseById(netflixId)
+      assertEquals(1, dao.getAllRecurringExpensesList().size)
+    } finally {
+      db.close()
+    }
+  }
+
+  @Test
+  fun `expenseRepository processDueRecurringExpenses creates expense and advances nextDueDate without duplicates`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = Room.inMemoryDatabaseBuilder(context, ExpenseDatabase::class.java)
+      .allowMainThreadQueries()
+      .build()
+
+    try {
+      val repository = ExpenseRepository(
+        expenseDao = db.expenseDao(),
+        budgetDao = db.budgetDao(),
+        syncLogDao = db.syncLogDao(),
+        recurringExpenseDao = db.recurringExpenseDao()
+      )
+
+      val now = System.currentTimeMillis()
+
+      // Add a due recurring bill (e.g. Wi-Fi bill due yesterday)
+      val wifiBill = RecurringExpenseEntity(
+        title = "Wi-Fi Broadband",
+        amount = 999.0,
+        category = "Bills & Utilities",
+        frequency = "MONTHLY",
+        dayOfMonth = 10,
+        paymentMethod = "UPI",
+        tag = "Fixed Bill",
+        nextDueDate = now - 5000, // due now
+        isActive = true,
+        autoCreateExpense = true
+      )
+      val recurringId = repository.insertRecurringExpense(wifiBill)
+      assertTrue(recurringId > 0)
+
+      // Initially expenses table is empty
+      val initialExpenses = repository.allExpenses.first()
+      assertEquals(0, initialExpenses.size)
+
+      // Process due recurring expenses
+      val createdExpenses = repository.processDueRecurringExpenses(currentTime = now)
+      assertEquals(1, createdExpenses.size)
+      assertEquals("Wi-Fi Broadband", createdExpenses[0].title)
+      assertEquals(999.0, createdExpenses[0].amount, 0.01)
+      assertEquals("Bills & Utilities", createdExpenses[0].category)
+
+      // Verify that expense was inserted into Room DB
+      val expensesAfterProcess = repository.allExpenses.first()
+      assertEquals(1, expensesAfterProcess.size)
+      assertEquals("Wi-Fi Broadband", expensesAfterProcess[0].title)
+
+      // Verify recurring bill nextDueDate was advanced into the future
+      val updatedRecurring = repository.allRecurringExpenses.first().first { it.id == recurringId }
+      assertTrue("nextDueDate should be advanced past current time", updatedRecurring.nextDueDate > now)
+      assertNotNull("lastExecutedDate should be recorded", updatedRecurring.lastExecutedDate)
+
+      // Running processDueRecurringExpenses a second time should create NO duplicates
+      val secondRunCreated = repository.processDueRecurringExpenses(currentTime = now)
+      assertEquals(0, secondRunCreated.size)
+      assertEquals(1, repository.allExpenses.first().size)
+    } finally {
+      db.close()
+    }
+  }
+
+  @Test
+  fun `generatePdfReport creates valid PDF file for transaction history`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val sampleExpenses = listOf(
+      ExpenseEntity(
+        id = 1,
+        title = "Client Lunch Meeting",
+        amount = 1850.0,
+        category = "Food & Dining",
+        date = System.currentTimeMillis(),
+        paymentMethod = "UPI",
+        tag = "Business",
+        notes = "Invoice #402 with client tax GST"
+      ),
+      ExpenseEntity(
+        id = 2,
+        title = "Amazon Electronics",
+        amount = 4599.0,
+        category = "Shopping",
+        date = System.currentTimeMillis() - 86400000L,
+        paymentMethod = "Credit Card",
+        tag = "Personal",
+        bankName = "HDFC Bank",
+        creditCardName = "HDFC Regalia",
+        notes = "Office monitor adapter"
+      )
+    )
+    val sampleBudgets = listOf(
+      BudgetEntity(category = "Food & Dining", monthlyLimit = 5000.0),
+      BudgetEntity(category = "Shopping", monthlyLimit = 10000.0)
+    )
+
+    val pdfFile = ReportExportManager.generatePdfReport(
+      context = context,
+      expenses = sampleExpenses,
+      budgets = sampleBudgets,
+      monthYearTitle = "Transaction History Ledger"
+    )
+
+    assertTrue("PDF file should exist", pdfFile.exists())
+    assertTrue("PDF file size should be greater than zero", pdfFile.length() > 0)
+    assertTrue("PDF file name should end with .pdf", pdfFile.name.endsWith(".pdf"))
+  }
+
+  @Test
+  fun `generateMonthlyPdfReport and generateMonthlyCsvReport create valid monthly report files`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val cal = Calendar.getInstance().apply {
+      set(Calendar.YEAR, 2026)
+      set(Calendar.MONTH, Calendar.OCTOBER)
+      set(Calendar.DAY_OF_MONTH, 15)
+    }
+    val sampleExpenses = listOf(
+      ExpenseEntity(
+        id = 10,
+        title = "Office Coworking Rent",
+        amount = 8500.0,
+        category = "Bills & Utilities",
+        date = cal.timeInMillis,
+        paymentMethod = "Bank Transfer",
+        tag = "Work",
+        notes = "October office invoice"
+      )
+    )
+    val sampleBudgets = listOf(
+      BudgetEntity(category = "Bills & Utilities", monthlyLimit = 10000.0)
+    )
+
+    // Test Monthly PDF
+    val monthlyPdf = ReportExportManager.generateMonthlyPdfReport(
+      context = context,
+      expenses = sampleExpenses,
+      budgets = sampleBudgets,
+      year = 2026,
+      month = 10
+    )
+    assertTrue("Monthly PDF file should exist", monthlyPdf.exists())
+    assertTrue("Monthly PDF file should not be empty", monthlyPdf.length() > 0)
+    assertTrue("Monthly PDF file name should end with .pdf", monthlyPdf.name.endsWith(".pdf"))
+
+    // Test Monthly CSV
+    val monthlyCsv = ReportExportManager.generateMonthlyCsvReport(
+      context = context,
+      expenses = sampleExpenses,
+      year = 2026,
+      month = 10
+    )
+    assertTrue("Monthly CSV file should exist", monthlyCsv.exists())
+    assertTrue("Monthly CSV file should not be empty", monthlyCsv.length() > 0)
+    assertTrue("Monthly CSV file name should contain October or 10", monthlyCsv.name.contains("2026_10"))
+    assertTrue("Monthly CSV file name should end with .csv", monthlyCsv.name.endsWith(".csv"))
+
+    val content = monthlyCsv.readText(Charsets.UTF_8)
+    assertTrue("CSV header should contain ID, Date, Title, Notes", content.contains("ID,Date,Title,Amount (INR),Category,Payment Method"))
+    assertTrue("CSV row should contain Office Coworking Rent", content.contains("Office Coworking Rent"))
+    assertTrue("CSV row should contain October office invoice", content.contains("October office invoice"))
+  }
+
+  @Test
+  fun `BudgetNotificationService initializes notification channel properly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    BudgetNotificationService.initNotificationChannel(context)
+
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val channel = manager.getNotificationChannel(BudgetNotificationService.CHANNEL_ID)
+    assertNotNull("Channel should be created", channel)
+    assertEquals(BudgetNotificationService.CHANNEL_ID, channel.id)
+    assertEquals(BudgetNotificationService.CHANNEL_NAME, channel.name)
+    assertEquals(NotificationManager.IMPORTANCE_HIGH, channel.importance)
+  }
+
+  @Test
+  fun `evaluateBudgetsAndNotify triggers 80 percent warning and 100 percent exceeded alerts`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    BudgetNotificationService.resetAllAlertsHistory(context)
+    BudgetNotificationService.setAlertsEnabled(context, true)
+    BudgetNotificationService.set80AlertEnabled(context, true)
+    BudgetNotificationService.set100AlertEnabled(context, true)
+
+    // Test 80% condition (4200 spent of 5000 limit = 84%)
+    val items80 = listOf(
+      BudgetProgressItem(
+        category = "Food & Dining",
+        monthlyLimit = 5000.0,
+        spentAmount = 4200.0,
+        remainingAmount = 800.0,
+        percentage = 84f,
+        isOverBudget = false
+      )
+    )
+
+    val alerts80 = BudgetNotificationService.evaluateBudgetsAndNotify(context, items80)
+    assertEquals("Should generate 1 alert for 80% threshold", 1, alerts80.size)
+    assertEquals(BudgetAlertThreshold.WARNING_80, alerts80[0].threshold)
+    assertEquals("Food & Dining", alerts80[0].category)
+    assertEquals(84f, alerts80[0].percentage)
+
+    // Test deduplication: subsequent evaluation in the same month should NOT fire duplicate alert
+    val alerts80Duplicate = BudgetNotificationService.evaluateBudgetsAndNotify(context, items80)
+    assertEquals("Should not generate duplicate alert for already notified threshold", 0, alerts80Duplicate.size)
+
+    // Test 100% condition (5500 spent of 5000 limit = 110%)
+    val items100 = listOf(
+      BudgetProgressItem(
+        category = "Food & Dining",
+        monthlyLimit = 5000.0,
+        spentAmount = 5500.0,
+        remainingAmount = 0.0,
+        percentage = 110f,
+        isOverBudget = true
+      )
+    )
+
+    val alerts100 = BudgetNotificationService.evaluateBudgetsAndNotify(context, items100)
+    assertEquals("Should generate 1 alert for 100% threshold", 1, alerts100.size)
+    assertEquals(BudgetAlertThreshold.EXCEEDED_100, alerts100[0].threshold)
+    assertEquals("Food & Dining", alerts100[0].category)
+    assertEquals(110f, alerts100[0].percentage)
+
+    // Subsequent evaluation of 100% should also be deduplicated
+    val alerts100Duplicate = BudgetNotificationService.evaluateBudgetsAndNotify(context, items100)
+    assertEquals("Should not generate duplicate 100% alert", 0, alerts100Duplicate.size)
+  }
+
+  @Test
+  fun `evaluateBudgetsAndNotify resets alert flag when spending drops below 80 percent`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    BudgetNotificationService.resetAllAlertsHistory(context)
+    BudgetNotificationService.setAlertsEnabled(context, true)
+
+    val cal = Calendar.getInstance()
+    val year = cal.get(Calendar.YEAR)
+    val month = cal.get(Calendar.MONTH) + 1
+
+    // 1. Trigger 80% alert
+    val items80 = listOf(
+      BudgetProgressItem(
+        category = "Entertainment",
+        monthlyLimit = 2000.0,
+        spentAmount = 1700.0,
+        remainingAmount = 300.0,
+        percentage = 85f,
+        isOverBudget = false
+      )
+    )
+    val firstRun = BudgetNotificationService.evaluateBudgetsAndNotify(context, items80)
+    assertEquals(1, firstRun.size)
+    assertTrue(BudgetNotificationService.isAlertAlreadySent(context, year, month, "Entertainment", BudgetAlertThreshold.WARNING_80))
+
+    // 2. User deletes or edits expense so spending drops to 1200 (60% < 80%)
+    val itemsUnder80 = listOf(
+      BudgetProgressItem(
+        category = "Entertainment",
+        monthlyLimit = 2000.0,
+        spentAmount = 1200.0,
+        remainingAmount = 800.0,
+        percentage = 60f,
+        isOverBudget = false
+      )
+    )
+    val resetRun = BudgetNotificationService.evaluateBudgetsAndNotify(context, itemsUnder80)
+    assertEquals(0, resetRun.size)
+    assertFalse("Flag should be cleared when spending drops below 80%",
+      BudgetNotificationService.isAlertAlreadySent(context, year, month, "Entertainment", BudgetAlertThreshold.WARNING_80)
+    )
+
+    // 3. User spends again and reaches 85% -> alert should fire again!
+    val secondRun = BudgetNotificationService.evaluateBudgetsAndNotify(context, items80)
+    assertEquals("Alert should fire again after being cleared", 1, secondRun.size)
+    assertEquals(BudgetAlertThreshold.WARNING_80, secondRun[0].threshold)
+  }
+
+  @Test
+  fun `BudgetNotificationService settings can toggle alerts on and off`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    BudgetNotificationService.resetAllAlertsHistory(context)
+
+    BudgetNotificationService.setAlertsEnabled(context, false)
+    assertFalse(BudgetNotificationService.isAlertsEnabled(context))
+
+    val items = listOf(
+      BudgetProgressItem(
+        category = "Shopping",
+        monthlyLimit = 5000.0,
+        spentAmount = 5500.0,
+        remainingAmount = 0.0,
+        percentage = 110f,
+        isOverBudget = true
+      )
+    )
+
+    val resultsWhenDisabled = BudgetNotificationService.evaluateBudgetsAndNotify(context, items)
+    assertEquals("No alerts should be generated when master switch is off", 0, resultsWhenDisabled.size)
+
+    BudgetNotificationService.setAlertsEnabled(context, true)
+    assertTrue(BudgetNotificationService.isAlertsEnabled(context))
+  }
+
+  @Test
+  fun `sendTestNotification sends test notification safely`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+    org.robolectric.Shadows.shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+    BudgetNotificationService.initNotificationChannel(context)
+
+    // Tests that sending test notifications executes and posts successfully
+    val result80 = BudgetNotificationService.sendTestNotification(context, BudgetAlertThreshold.WARNING_80, "Food & Dining")
+    val result100 = BudgetNotificationService.sendTestNotification(context, BudgetAlertThreshold.EXCEEDED_100, "Travel")
+    assertTrue("Should successfully post 80% test notification", result80)
+    assertTrue("Should successfully post 100% test notification", result100)
+  }
+
+  @Test
+  fun `securityAndSyncManager google sign in and sign out updates state`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val manager = com.example.security.SecurityAndSyncManager(context)
+
+    manager.signOutGoogle()
+    assertEquals(null, manager.googleUserEmail.value)
+
+    manager.signInGoogle("test.user@gmail.com")
+    assertEquals("test.user@gmail.com", manager.googleUserEmail.value)
+
+    manager.recordSyncSuccess()
+    assertTrue(manager.lastSyncTime.value > 0L)
+
+    manager.signOutGoogle()
+    assertEquals(null, manager.googleUserEmail.value)
+  }
+
+  @Test
+  fun `categoryBudgetGauge displays correct percentage consumed and remaining headroom`() {
+    // Case 1: Within Budget (4500 spent of 6000 limit -> 75% consumed, 1500 remaining)
+    val itemWithin = BudgetProgressItem(
+      category = "Food",
+      monthlyLimit = 6000.0,
+      spentAmount = 4500.0,
+      remainingAmount = 1500.0,
+      percentage = 75.0f,
+      isOverBudget = false
+    )
+    assertEquals(75.0f, itemWithin.percentage, 0.01f)
+    assertEquals(1500.0, itemWithin.remainingAmount, 0.01)
+    assertFalse(itemWithin.isOverBudget)
+
+    // Case 2: Over Budget (7200 spent of 5000 limit -> 144% consumed, 0 remaining, 2200 over)
+    val itemOver = BudgetProgressItem(
+      category = "Shopping",
+      monthlyLimit = 5000.0,
+      spentAmount = 7200.0,
+      remainingAmount = 0.0,
+      percentage = 144.0f,
+      isOverBudget = true
+    )
+    assertEquals(144.0f, itemOver.percentage, 0.01f)
+    assertEquals(0.0, itemOver.remainingAmount, 0.01)
+    assertTrue(itemOver.isOverBudget)
+    assertEquals(2200.0, itemOver.spentAmount - itemOver.monthlyLimit, 0.01)
+  }
+
+  @Test
+  fun `exportCsvReport exports Room DB records to CSV with RFC-4180 encoding and UTF-8 BOM`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val testDate = 1773500000000L
+
+    val roomExpenses = listOf(
+      ExpenseEntity(
+        id = 101,
+        title = "Grocery Supplies",
+        amount = 1850.75,
+        category = "Groceries",
+        date = testDate,
+        paymentMethod = "UPI",
+        bankName = "State Bank of India",
+        creditCardName = "",
+        tag = "Essential",
+        notes = "Vegetables, milk, pulses"
+      ),
+      ExpenseEntity(
+        id = 102,
+        title = "Weekend Dinner",
+        amount = 2400.00,
+        category = "Food",
+        date = testDate + 86400000L,
+        paymentMethod = "Credit Card",
+        bankName = "HDFC Bank",
+        creditCardName = "HDFC Regalia",
+        tag = "Dining Out",
+        notes = "Dinner with family"
+      )
+    )
+
+    val csvFile = ReportExportManager.generateCsvReport(
+      context = context,
+      expenses = roomExpenses,
+      fileNamePrefix = "Room_Ledger_Backup"
+    )
+
+    assertTrue("CSV file should exist", csvFile.exists())
+    assertTrue("CSV file must have .csv extension", csvFile.name.endsWith(".csv"))
+    assertTrue("CSV file must start with prefix", csvFile.name.startsWith("Room_Ledger_Backup"))
+    assertTrue("CSV file length must be > 0", csvFile.length() > 0)
+
+    val content = csvFile.readText(Charsets.UTF_8)
+    // Check header
+    assertTrue("Must contain header", content.contains("ID,Date,Title,Amount (INR),Category,Payment Method,Bank Name,Credit Card,Tag,Notes"))
+    // Check items
+    assertTrue("Must contain Grocery Supplies row", content.contains("Grocery Supplies"))
+    assertTrue("Must contain State Bank of India", content.contains("State Bank of India"))
+    assertTrue("Must contain HDFC Regalia", content.contains("HDFC Regalia"))
+    assertTrue("Must contain 1850.75", content.contains("1850.75"))
+    assertTrue("Must contain 2400.0", content.contains("2400.0"))
+  }
+
+  @Test
+  fun `authManager initializes with guest state and valid web client ID`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val authManager = com.example.auth.AuthManager(context)
+
+    // Initially in guest mode
+    assertFalse("Should not be authenticating initially", authManager.isAuthenticating.value)
+    assertEquals(null, authManager.authErrorMessage.value)
+
+    // Web client ID must be present in resources from google-services.json
+    val clientId = authManager.getWebClientId()
+    assertNotNull("Web Client ID should be loaded from resources", clientId)
+    assertTrue("Web Client ID should not be empty", clientId!!.isNotEmpty())
+    assertTrue("Web Client ID should match Google OAuth format", clientId.contains(".apps.googleusercontent.com"))
   }
 }
 

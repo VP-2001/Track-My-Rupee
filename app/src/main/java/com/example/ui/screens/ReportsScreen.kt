@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudSync
@@ -78,8 +80,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -90,6 +95,7 @@ import com.example.export.ReportExportManager
 import com.example.ui.components.EditCardSuggestionsDialog
 import com.example.ui.components.ExportDateReportDialog
 import com.example.ui.components.LocalBackupRestoreCard
+import com.example.ui.components.MonthlyAiSpendingReportCard
 import com.example.ui.viewmodel.ExpenseViewModel
 import java.io.File
 import java.text.SimpleDateFormat
@@ -111,6 +117,9 @@ fun ReportsScreen(
     var isLockEnabled by remember { mutableStateOf(securityManager.isLockEnabled()) }
     val googleEmail by securityManager.googleUserEmail.collectAsStateWithLifecycle()
     val lastSyncTime by securityManager.lastSyncTime.collectAsStateWithLifecycle()
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+    val isAuthenticating by viewModel.isAuthenticating.collectAsStateWithLifecycle()
+    val isCloudSyncing by viewModel.isCloudSyncing.collectAsStateWithLifecycle()
 
     var showPinSetupDialog by remember { mutableStateOf(false) }
     var newPinText by remember { mutableStateOf("") }
@@ -165,7 +174,14 @@ fun ReportsScreen(
             )
         }
 
-        // 2. Master Excel Dashboard Export
+        // 2. Gemini AI End-of-Month Spending Habits Summary Report
+        item {
+            MonthlyAiSpendingReportCard(
+                viewModel = viewModel
+            )
+        }
+
+        // 3. Master Excel Dashboard Export
         item {
             Surface(
                 shape = RoundedCornerShape(24.dp),
@@ -397,6 +413,32 @@ fun ReportsScreen(
                         color = com.example.ui.theme.SophisticatedDarkOnSurface
                     )
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    // Gemini AI Monthly Spending Report PDF
+                    val aiReportState by viewModel.monthlyAiReportState.collectAsStateWithLifecycle()
+                    val currentAiReport = (aiReportState as? com.example.ui.viewmodel.MonthlyAiReportUiState.Success)?.report
+
+                    ExportOptionRow(
+                        title = "Gemini AI Spending Report (.pdf)",
+                        subtitle = if (currentAiReport != null)
+                            "${currentAiReport.monthName} ${currentAiReport.year} • Health score: ${currentAiReport.spendingHabitRating}/100 with habits & goals"
+                        else
+                            "Natural language habits, health score & actionable goals exported to PDF",
+                        icon = Icons.Default.AutoAwesome,
+                        iconTint = com.example.ui.theme.SophisticatedPrimary,
+                        onDownload = {
+                            val rep = currentAiReport ?: viewModel.getOrGenerateCurrentAiReport()
+                            val pdf = viewModel.exportAiReportPdf(rep)
+                            handleDownload(pdf, "application/pdf", "Gemini AI Spending Report PDF")
+                        },
+                        onShare = {
+                            val rep = currentAiReport ?: viewModel.getOrGenerateCurrentAiReport()
+                            val pdf = viewModel.exportAiReportPdf(rep)
+                            ReportExportManager.shareFile(context, pdf, "application/pdf", "Gemini AI Spending Report PDF")
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = com.example.ui.theme.SophisticatedDarkSurface)
 
                     // PDF Button
                     ExportOptionRow(
@@ -650,8 +692,8 @@ fun ReportsScreen(
                             Icon(Icons.Default.CloudSync, contentDescription = "Sync", tint = com.example.ui.theme.SophisticatedPrimary)
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Text("Cloud Vault & Sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = com.example.ui.theme.SophisticatedDarkOnSurface)
-                                Text("Client-side Encrypted Backup", style = MaterialTheme.typography.bodySmall, color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant)
+                                Text("Firebase Cloud Sync & Ledger Vault", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = com.example.ui.theme.SophisticatedDarkOnSurface)
+                                Text("Cross-device synchronization via Firebase Firestore", style = MaterialTheme.typography.bodySmall, color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant)
                             }
                         }
                     }
@@ -659,6 +701,7 @@ fun ReportsScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     // Account row
+                    val isUserLoggedIn = currentUser != null || googleEmail != null
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = com.example.ui.theme.SophisticatedDarkSurface,
@@ -673,11 +716,47 @@ fun ReportsScreen(
                                 modifier = Modifier.weight(1f, fill = false),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.AccountCircle, contentDescription = "Account", modifier = Modifier.size(32.dp), tint = com.example.ui.theme.SophisticatedPrimary)
+                                if (currentUser?.photoUrl != null) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(context)
+                                            .data(currentUser?.photoUrl)
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "Profile Picture",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                    )
+                                } else if (currentUser != null) {
+                                    val initial = currentUser?.displayName?.firstOrNull()?.uppercaseChar()
+                                        ?: currentUser?.email?.firstOrNull()?.uppercaseChar()
+                                        ?: 'U'
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = initial.toString(),
+                                            fontWeight = FontWeight.Bold,
+                                            color = com.example.ui.theme.SophisticatedPrimary
+                                        )
+                                    }
+                                } else {
+                                    Icon(
+                                        Icons.Default.AccountCircle,
+                                        contentDescription = "Account",
+                                        modifier = Modifier.size(36.dp),
+                                        tint = com.example.ui.theme.SophisticatedPrimary
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column {
                                     Text(
-                                        text = googleEmail ?: "Local Vault (Independent)",
+                                        text = currentUser?.displayName ?: googleEmail ?: "Local Vault (Guest)",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = com.example.ui.theme.SophisticatedDarkOnSurface,
@@ -685,33 +764,56 @@ fun ReportsScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = if (googleEmail != null) {
-                                            if (lastSyncTime > 0) "Last synced: ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastSyncTime))}" else "Ready to sync"
+                                        text = if (isUserLoggedIn) {
+                                            currentUser?.email ?: if (lastSyncTime > 0) "Last synced: ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastSyncTime))}" else "Linked to Google"
                                         } else {
                                             "100% on-device private storage"
                                         },
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
 
                             Spacer(modifier = Modifier.width(8.dp))
 
-                            if (googleEmail == null) {
-                                Button(
-                                    onClick = {
-                                        customAccountEmailInput = ""
-                                        showAccountDialog = true
+                            if (!isUserLoggedIn) {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Button(
+                                        onClick = {
+                                            val act = context as? Activity
+                                            if (act != null) {
+                                                viewModel.signInWithGoogle(act)
+                                            }
+                                        },
+                                        enabled = !isAuthenticating,
+                                        modifier = Modifier.testTag("reports_google_sign_in_button")
+                                    ) {
+                                        if (isAuthenticating) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
+                                        } else {
+                                            Text("Sign in with Google")
+                                        }
                                     }
-                                ) {
-                                    Text("Link Account")
+                                    TextButton(
+                                        onClick = {
+                                            customAccountEmailInput = ""
+                                            showAccountDialog = true
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text("Manual link", style = MaterialTheme.typography.labelSmall, color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant)
+                                    }
                                 }
                             } else {
                                 OutlinedButton(
                                     onClick = {
-                                        securityManager.signOutGoogle()
-                                    }
+                                        viewModel.signOut()
+                                    },
+                                    modifier = Modifier.testTag("reports_sign_out_button")
                                 ) {
                                     Text("Sign Out")
                                 }
@@ -722,32 +824,41 @@ fun ReportsScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     // Backup and Restore Actions
+                    val isBusy = isAiLoading || isCloudSyncing
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
                             onClick = { viewModel.performCloudBackup() },
-                            modifier = Modifier.weight(1f).height(48.dp),
-                            enabled = !isAiLoading
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("sync_to_cloud_button"),
+                            enabled = !isBusy
                         ) {
-                            if (isAiLoading) {
+                            if (isCloudSyncing) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                            } else {
-                                Icon(Icons.Default.CloudUpload, contentDescription = "Backup")
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Backup")
+                                Text("Syncing...")
+                            } else {
+                                Icon(Icons.Default.CloudUpload, contentDescription = "Sync to Cloud")
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sync to Cloud")
                             }
                         }
 
                         OutlinedButton(
                             onClick = { viewModel.performCloudRestore() },
-                            modifier = Modifier.weight(1f).height(48.dp),
-                            enabled = !isAiLoading
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("pull_from_cloud_button"),
+                            enabled = !isBusy
                         ) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = "Restore")
+                            Icon(Icons.Default.CloudDownload, contentDescription = "Pull from Cloud")
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Restore")
+                            Text("Pull Cloud")
                         }
                     }
 

@@ -26,14 +26,18 @@ import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -65,6 +69,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ExpenseEntity
 import com.example.export.ReportExportManager
 import com.example.ui.theme.AmberGold
+import com.example.ui.theme.DangerRed
 import com.example.ui.theme.SophisticatedDarkBorder
 import com.example.ui.theme.SophisticatedDarkOnSurface
 import com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
@@ -542,72 +547,257 @@ fun MonthlyExpenseReportDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Bottom Export Actions Row
+                Text(
+                    text = "EXPORT REPORT (${report.monthName.uppercase(Locale.getDefault())}):",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SophisticatedDarkOnSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Export Excel Report (.xlsx)
-                    OutlinedButton(
-                        onClick = {
-                            val excelFile = viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth)
-                            ReportExportManager.shareFile(
-                                context,
-                                excelFile,
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                "Monthly Expense Report (${report.monthName})"
+                    var showPdfMenu by remember { mutableStateOf(false) }
+                    var showCsvMenu by remember { mutableStateOf(false) }
+                    var showExcelMenu by remember { mutableStateOf(false) }
+
+                    // 1. Export PDF
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { showPdfMenu = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("monthly_report_export_pdf_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, DangerRed)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = null,
+                                tint = DangerRed,
+                                modifier = Modifier.size(16.dp)
                             )
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("monthly_report_export_excel_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, SuccessGreen)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.TableChart,
-                            contentDescription = null,
-                            tint = SuccessGreen,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Export Excel",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SuccessGreen
-                        )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "PDF",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = DangerRed
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showPdfMenu,
+                            onDismissRequest = { showPdfMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Save PDF to Downloads", fontWeight = FontWeight.Bold)
+                                        Text("Save for personal tax & bookkeeping records", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Download, contentDescription = null, tint = DangerRed)
+                                },
+                                onClick = {
+                                    showPdfMenu = false
+                                    val pdfFile = viewModel.exportMonthlyPdfReport(selectedYear, selectedMonth)
+                                    val (saved, msg) = ReportExportManager.saveToDownloads(
+                                        context,
+                                        pdfFile,
+                                        "application/pdf"
+                                    )
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (saved) "Saved PDF to Downloads: ${pdfFile.name}" else msg,
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Share PDF with Accountant", fontWeight = FontWeight.Bold)
+                                        Text("Send formatted statement via Email, WhatsApp, Drive", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Share, contentDescription = null, tint = DangerRed)
+                                },
+                                onClick = {
+                                    showPdfMenu = false
+                                    val pdfFile = viewModel.exportMonthlyPdfReport(selectedYear, selectedMonth)
+                                    ReportExportManager.shareFile(
+                                        context,
+                                        pdfFile,
+                                        "application/pdf",
+                                        "Monthly Expense Report PDF (${report.monthName})"
+                                    )
+                                }
+                            )
+                        }
                     }
 
-                    // Export CSV
-                    OutlinedButton(
-                        onClick = {
-                            val csvFile = ReportExportManager.generateCsvReport(context, report.expenses)
-                            ReportExportManager.shareFile(
-                                context,
-                                csvFile,
-                                "text/csv",
-                                "Monthly Expense Report CSV (${report.monthName})"
+                    // 2. Export CSV
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { showCsvMenu = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("monthly_report_export_csv_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, SophisticatedPrimary)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Description,
+                                contentDescription = null,
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(16.dp)
                             )
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("monthly_report_export_csv_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, SophisticatedPrimary)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Description,
-                            contentDescription = null,
-                            tint = SophisticatedPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Export CSV",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SophisticatedPrimary
-                        )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "CSV",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedPrimary
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showCsvMenu,
+                            onDismissRequest = { showCsvMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Save CSV to Downloads", fontWeight = FontWeight.Bold)
+                                        Text("UTF-8 comma-separated file for spreadsheets", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Download, contentDescription = null, tint = SophisticatedPrimary)
+                                },
+                                onClick = {
+                                    showCsvMenu = false
+                                    val csvFile = viewModel.exportMonthlyCsvReport(selectedYear, selectedMonth)
+                                    val (saved, msg) = ReportExportManager.saveToDownloads(
+                                        context,
+                                        csvFile,
+                                        "text/csv"
+                                    )
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (saved) "Saved CSV to Downloads: ${csvFile.name}" else msg,
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Share CSV with Accountant", fontWeight = FontWeight.Bold)
+                                        Text("Send data file for accounting software", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Share, contentDescription = null, tint = SophisticatedPrimary)
+                                },
+                                onClick = {
+                                    showCsvMenu = false
+                                    val csvFile = viewModel.exportMonthlyCsvReport(selectedYear, selectedMonth)
+                                    ReportExportManager.shareFile(
+                                        context,
+                                        csvFile,
+                                        "text/csv",
+                                        "Monthly Expense Report CSV (${report.monthName})"
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    // 3. Export Excel
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { showExcelMenu = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("monthly_report_export_excel_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, SuccessGreen)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TableChart,
+                                contentDescription = null,
+                                tint = SuccessGreen,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Excel",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SuccessGreen
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showExcelMenu,
+                            onDismissRequest = { showExcelMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Save Excel to Downloads", fontWeight = FontWeight.Bold)
+                                        Text("18-col ledger workbook with formatting", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Download, contentDescription = null, tint = SuccessGreen)
+                                },
+                                onClick = {
+                                    showExcelMenu = false
+                                    val excelFile = viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth)
+                                    val (saved, msg) = ReportExportManager.saveToDownloads(
+                                        context,
+                                        excelFile,
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    )
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (saved) "Saved Excel to Downloads: ${excelFile.name}" else msg,
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Share Excel with Accountant", fontWeight = FontWeight.Bold)
+                                        Text("Send formatted workbook via Email, WhatsApp", style = MaterialTheme.typography.bodySmall, color = SophisticatedDarkOnSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Share, contentDescription = null, tint = SuccessGreen)
+                                },
+                                onClick = {
+                                    showExcelMenu = false
+                                    val excelFile = viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth)
+                                    ReportExportManager.shareFile(
+                                        context,
+                                        excelFile,
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "Monthly Expense Report (${report.monthName})"
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }

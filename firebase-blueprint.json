@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and sync metadata",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Google user authentication UID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "lastSyncedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Client must submit FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "email"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Individual expense ledger transaction",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Document ID or sync ID of transaction"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the owning user"
+        },
+        "localId": {
+          "type": "number",
+          "description": "Local SQLite Room database record ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Transaction merchant or title"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Transaction expense amount in INR"
+        },
+        "date": {
+          "type": "number",
+          "description": "Transaction date in epoch milliseconds"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the transaction"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Payment instrument used"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional notes"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Expense tag"
+        },
+        "bankName": {
+          "type": "string",
+          "description": "Bank account name"
+        },
+        "creditCardName": {
+          "type": "string",
+          "description": "Credit card name"
+        },
+        "receiptUri": {
+          "type": "string",
+          "description": "Optional local receipt URI"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Client must submit FieldValue.serverTimestamp()"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Client must submit FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "title", "amount", "date", "category", "paymentMethod"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Authenticated user profile and sync state"
+    },
+    "/users/{userId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "User isolated transaction expenses collection"
+    }
+  }
+}

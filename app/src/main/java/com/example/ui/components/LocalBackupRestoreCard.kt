@@ -21,12 +21,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,12 +53,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.export.ReportExportManager
 import com.example.ui.theme.SophisticatedDarkBorder
@@ -64,7 +71,9 @@ import com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
 import com.example.ui.theme.SophisticatedDarkSurface
 import com.example.ui.theme.SophisticatedDarkSurfaceDim
 import com.example.ui.theme.SophisticatedDarkSurfaceVariant
+import com.example.ui.theme.SophisticatedOnPrimaryContainer
 import com.example.ui.theme.SophisticatedPrimary
+import com.example.ui.theme.SophisticatedPrimaryContainer
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.viewmodel.ExpenseViewModel
 import java.io.File
@@ -87,6 +96,9 @@ fun LocalBackupRestoreCard(
     var showRestorePasswordDialog by remember { mutableStateOf<ByteArray?>(null) }
     var restorePasswordInput by remember { mutableStateOf("") }
     var backupResultSheet by remember { mutableStateOf<File?>(null) }
+
+    var showCsvBackupDialog by remember { mutableStateOf(false) }
+    var csvBackupResultSheet by remember { mutableStateOf<File?>(null) }
 
     // File picker using OpenDocument contract to reliably pick .enc files
     val restoreFilePickerLauncher = rememberLauncherForActivityResult(
@@ -226,7 +238,7 @@ fun LocalBackupRestoreCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Action Buttons
+            // Action Buttons (Encrypted Backup & Restore)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -273,6 +285,95 @@ fun LocalBackupRestoreCard(
                     Icon(Icons.Default.FileOpen, contentDescription = "Restore File", modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Restore File", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+            }
+
+            // 3. Room DB CSV Ledger Export Feature
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = SophisticatedDarkSurfaceDim,
+                border = BorderStroke(1.dp, SophisticatedPrimary.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showCsvBackupDialog = true }
+                    .testTag("export_csv_backup_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(SophisticatedPrimary.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.TableChart,
+                                contentDescription = "CSV Backup",
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Export Room DB to CSV",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SophisticatedDarkOnSurface
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = SophisticatedPrimaryContainer
+                                ) {
+                                    Text(
+                                        text = "External Backup",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SophisticatedOnPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "RFC-4180 spreadsheet with all ${allExpenses.size} records",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = SophisticatedPrimary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = ".CSV",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedPrimary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Export CSV",
+                            tint = SophisticatedPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -520,6 +621,219 @@ fun LocalBackupRestoreCard(
                         onClick = { backupResultSheet = null },
                         modifier = Modifier
                             .weight(0.8f)
+                            .height(48.dp)
+                    ) {
+                        Text("Done")
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Room DB CSV Backup Dialog
+    if (showCsvBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { showCsvBackupDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.TableChart, contentDescription = null, tint = SophisticatedPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Export Room DB to CSV", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Export all ${allExpenses.size} financial records from the local Room database into a standard RFC-4180 CSV spreadsheet file.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SophisticatedDarkOnSurface
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = SophisticatedDarkSurfaceVariant,
+                        border = BorderStroke(1.dp, SophisticatedDarkBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Included Columns & Features:",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedPrimary
+                            )
+                            Text(
+                                text = "• ID, Date, Title, Amount (INR), Category, Payment Method, Bank, Credit Card, Tag, Notes",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SophisticatedDarkOnSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "• UTF-8 BOM encoding for seamless Microsoft Excel & Google Sheets compatibility",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SophisticatedDarkOnSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "• Full offline extraction directly from Room DB",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SuccessGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val csv = viewModel.exportCsvReport("Room_Ledger_Backup", allExpenses)
+                        val (success, msg) = ReportExportManager.saveToDownloads(
+                            context,
+                            csv,
+                            "text/csv"
+                        )
+                        if (csv.exists()) {
+                            csvBackupResultSheet = csv
+                        }
+                        Toast.makeText(
+                            context,
+                            if (success) "Exported ${allExpenses.size} records to Downloads: ${csv.name}" else msg,
+                            Toast.LENGTH_LONG
+                        ).show()
+                        showCsvBackupDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SophisticatedPrimary,
+                        contentColor = Color.Black
+                    ),
+                    modifier = Modifier.testTag("confirm_export_csv_btn")
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Export & Save CSV")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCsvBackupDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Success CSV Backup Result Sheet with Direct Share & Open
+    if (csvBackupResultSheet != null) {
+        val file = csvBackupResultSheet!!
+        ModalBottomSheet(
+            onDismissRequest = { csvBackupResultSheet = null }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = SuccessGreen.copy(alpha = 0.2f),
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.TableChart, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(32.dp))
+                    }
+                }
+
+                Text(
+                    text = "Room DB CSV Backup Ready!",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = SophisticatedDarkOnSurface
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = SophisticatedDarkSurfaceVariant,
+                    border = BorderStroke(1.dp, SophisticatedDarkBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "File: ${file.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SophisticatedDarkOnSurface
+                        )
+                        Text(
+                            text = "Location: Downloads directory",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SophisticatedDarkOnSurfaceVariant
+                        )
+                        Text(
+                            text = "Total Records: ${allExpenses.size} items • RFC-4180 CSV",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = SophisticatedPrimary
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            ReportExportManager.shareFile(
+                                context,
+                                file,
+                                "text/csv",
+                                "Room DB Expense Ledger (CSV Backup)"
+                            )
+                        },
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(48.dp)
+                            .testTag("share_csv_backup_btn"),
+                        colors = ButtonDefaults.buttonColors(containerColor = SophisticatedPrimary, contentColor = Color.Black)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Share CSV Backup")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val opened = ReportExportManager.openFile(context, file, "text/csv")
+                            if (!opened) {
+                                Toast.makeText(context, "No app found to open CSV files directly. You can find it in your Downloads folder.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(48.dp)
+                            .testTag("open_csv_backup_btn"),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SophisticatedDarkOnSurface),
+                        border = BorderStroke(1.dp, SophisticatedDarkBorder)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Open")
+                    }
+
+                    OutlinedButton(
+                        onClick = { csvBackupResultSheet = null },
+                        modifier = Modifier
+                            .weight(0.7f)
                             .height(48.dp)
                     ) {
                         Text("Done")

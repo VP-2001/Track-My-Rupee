@@ -3,6 +3,8 @@ package com.example.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
@@ -83,6 +86,10 @@ import com.example.data.model.ExpenseEntity
 import com.example.export.ReportExportManager
 import com.example.ui.components.EditCardSuggestionsDialog
 import com.example.ui.components.ExportDateReportDialog
+import com.example.ui.components.ExportTransactionsDialog
+import com.example.ui.components.MonthlyExpenseReportDialog
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Share
 import android.app.DatePickerDialog
 import com.example.ui.viewmodel.DateFilterType
 import com.example.ui.viewmodel.ExpenseViewModel
@@ -115,6 +122,8 @@ fun TransactionsScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var showCardSuggestionsDialog by remember { mutableStateOf(false) }
+    var showExportTransactionsDialog by remember { mutableStateOf(false) }
+    var showMonthlyReportDialog by remember { mutableStateOf(false) }
     var showExportDateReportDialog by remember { mutableStateOf(false) }
     var exportDateReportInitialTab by remember { mutableIntStateOf(0) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -242,130 +251,15 @@ fun TransactionsScreen(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        var showExportMenu by remember { mutableStateOf(false) }
-
-                        Box {
-                            IconButton(onClick = { showExportMenu = true }) {
-                                Icon(
-                                    Icons.Default.TableChart,
-                                    contentDescription = "Export to Excel",
-                                    tint = com.example.ui.theme.SuccessGreen
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = showExportMenu,
-                                onDismissRequest = { showExportMenu = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Export Monthly Report (.xlsx)", fontWeight = FontWeight.Bold)
-                                            Text("Full 18-col ledger & KPIs for any month", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = com.example.ui.theme.SuccessGreen)
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        exportDateReportInitialTab = 0
-                                        showExportDateReportDialog = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Export Custom Date Range (.xlsx)", fontWeight = FontWeight.Bold)
-                                            Text("Full details workbook for any date range", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.DateRange, contentDescription = null, tint = com.example.ui.theme.SuccessGreen)
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        exportDateReportInitialTab = 1
-                                        showExportDateReportDialog = true
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Download Full Excel (.xlsx)", fontWeight = FontWeight.Bold)
-                                            Text("Saves 7-sheet personal dashboard to Downloads folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.TableChart, contentDescription = null, tint = com.example.ui.theme.SuccessGreen)
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        val excel = viewModel.exportFullExcelDashboard()
-                                        val (success, msg) = ReportExportManager.saveToDownloads(
-                                            context,
-                                            excel,
-                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                        )
-                                        android.widget.Toast.makeText(context, if (success) "Downloaded to Downloads folder: ${excel.name}" else msg, android.widget.Toast.LENGTH_LONG).show()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Share Full Excel (.xlsx)")
-                                            Text("Send complete workbook via WhatsApp, Email, Drive", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        val excel = viewModel.exportFullExcelDashboard()
-                                        ReportExportManager.shareFile(
-                                            context,
-                                            excel,
-                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                            "Personal Finance Master Dashboard Excel"
-                                        )
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Download Filtered View (.xlsx)")
-                                            Text("Saves ${expenses.size} filtered items to Downloads", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        val excel = viewModel.exportExcelSpreadsheet()
-                                        val (success, msg) = ReportExportManager.saveToDownloads(
-                                            context,
-                                            excel,
-                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                        )
-                                        android.widget.Toast.makeText(context, if (success) "Downloaded: ${excel.name}" else msg, android.widget.Toast.LENGTH_LONG).show()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("Share Filtered View (.xlsx)")
-                                            Text("Send ${expenses.size} filtered items via app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        showExportMenu = false
-                                        val excel = viewModel.exportExcelSpreadsheet()
-                                        ReportExportManager.shareFile(
-                                            context,
-                                            excel,
-                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                            "Expense Ledger Excel"
-                                        )
-                                    }
-                                )
-                            }
+                        IconButton(
+                            onClick = { showExportTransactionsDialog = true },
+                            modifier = Modifier.testTag("export_transactions_button")
+                        ) {
+                            Icon(
+                                Icons.Default.FileDownload,
+                                contentDescription = "Export Transactions",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
 
                         Box {
@@ -481,9 +375,11 @@ fun TransactionsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Quick Search Scope Chips: Category, Date, Merchant, or All
+                    // Quick Search Scope Chips: Merchant, Category, Notes, Date, or All
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -493,6 +389,7 @@ fun TransactionsScreen(
                                 SearchFilterScope.ALL -> Icons.Default.FilterList
                                 SearchFilterScope.MERCHANT -> Icons.Default.Storefront
                                 SearchFilterScope.CATEGORY -> Icons.Default.Category
+                                SearchFilterScope.NOTES -> Icons.Default.Description
                                 SearchFilterScope.DATE -> Icons.Default.DateRange
                             }
                             FilterChip(
@@ -575,6 +472,36 @@ fun TransactionsScreen(
                                             Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(12.dp))
                                         },
                                         label = { Text(merchant, style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Contextual Quick Filters for Notes Scope
+                    AnimatedVisibility(visible = searchScope == SearchFilterScope.NOTES) {
+                        Column {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Common Note Keywords:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val commonNotePresets = listOf("Refund", "Bill", "Dinner", "Trip", "Gift", "Shared", "Office", "Rent", "Subscription")
+                                items(commonNotePresets) { notePreset ->
+                                    val isNoteActive = searchQuery.equals(notePreset, ignoreCase = true)
+                                    FilterChip(
+                                        selected = isNoteActive,
+                                        onClick = {
+                                            if (isNoteActive) viewModel.setSearchQuery("")
+                                            else viewModel.setSearchQuery(notePreset)
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(12.dp))
+                                        },
+                                        label = { Text(notePreset, style = MaterialTheme.typography.labelSmall) }
                                     )
                                 }
                             }
@@ -875,6 +802,32 @@ fun TransactionsScreen(
             EditCardSuggestionsDialog(
                 viewModel = viewModel,
                 onDismiss = { showCardSuggestionsDialog = false }
+            )
+        }
+
+        if (showExportTransactionsDialog) {
+            ExportTransactionsDialog(
+                viewModel = viewModel,
+                filteredExpenses = expenses,
+                allExpenses = allExpenses,
+                onOpenMonthlyReports = {
+                    showMonthlyReportDialog = true
+                },
+                onOpenCustomDateReport = {
+                    exportDateReportInitialTab = 1
+                    showExportDateReportDialog = true
+                },
+                onDismissRequest = { showExportTransactionsDialog = false }
+            )
+        }
+
+        if (showMonthlyReportDialog) {
+            val nowCal = Calendar.getInstance()
+            MonthlyExpenseReportDialog(
+                initialYear = nowCal.get(Calendar.YEAR),
+                initialMonth = nowCal.get(Calendar.MONTH) + 1,
+                viewModel = viewModel,
+                onDismissRequest = { showMonthlyReportDialog = false }
             )
         }
 

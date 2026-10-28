@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -30,6 +32,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,7 +51,9 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.ExtractedTransaction
 import com.example.data.model.ExpenseEntity
+import com.example.ui.components.AccountBottomSheet
 import com.example.ui.components.AddEditExpenseBottomSheet
+import com.example.ui.components.ProfileAvatarButton
 import com.example.ui.components.VoiceExpenseDialog
 import com.example.ui.screens.AiChatScreen
 import com.example.ui.theme.AmberGold
@@ -75,25 +80,59 @@ enum class NavigationScreen(val label: String, val icon: ImageVector) {
 
 class MainActivity : FragmentActivity() {
     private val viewModel: ExpenseViewModel by viewModels()
+    private val targetScreenState = androidx.compose.runtime.mutableStateOf(NavigationScreen.DASHBOARD)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIntent(intent)
         setContent {
             MyApplicationTheme {
-                ExpenseTrackerApp(viewModel = viewModel)
+                ExpenseTrackerApp(
+                    viewModel = viewModel,
+                    initialScreen = targetScreenState.value
+                )
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Automatically check and add any due recurring transactions at scheduled intervals
+        viewModel.processDueRecurringExpenses()
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: android.content.Intent?) {
+        if (intent?.getStringExtra("navigate_to") == "budgets") {
+            targetScreenState.value = NavigationScreen.BUDGETS
         }
     }
 }
 
 @Composable
-fun ExpenseTrackerApp(viewModel: ExpenseViewModel) {
+fun ExpenseTrackerApp(
+    viewModel: ExpenseViewModel,
+    initialScreen: NavigationScreen = NavigationScreen.DASHBOARD
+) {
     val isLocked by viewModel.securityManager.isAppLocked.collectAsStateWithLifecycle()
 
-    var currentScreen by remember { mutableStateOf(NavigationScreen.DASHBOARD) }
+    var currentScreen by remember { mutableStateOf(initialScreen) }
+
+    androidx.compose.runtime.LaunchedEffect(initialScreen) {
+        if (initialScreen != NavigationScreen.DASHBOARD) {
+            currentScreen = initialScreen
+        }
+    }
+
     var aiToolsTab by remember { mutableIntStateOf(0) }
 
+    var isAccountSheetOpen by remember { mutableStateOf(false) }
     var isAddExpenseOpen by remember { mutableStateOf(false) }
     var isVoiceExpenseDialogOpen by remember { mutableStateOf(false) }
     var expenseToEdit by remember { mutableStateOf<ExpenseEntity?>(null) }
@@ -111,6 +150,33 @@ fun ExpenseTrackerApp(viewModel: ExpenseViewModel) {
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
+            topBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Track My Rupee",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        ProfileAvatarButton(
+                            viewModel = viewModel,
+                            onClick = { isAccountSheetOpen = true }
+                        )
+                    }
+                }
+            },
             bottomBar = {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surfaceDim,
@@ -251,7 +317,8 @@ fun ExpenseTrackerApp(viewModel: ExpenseViewModel) {
                             expenseToEdit = exp
                             preFillTransaction = null
                             isAddExpenseOpen = true
-                        }
+                        },
+                        onOpenAccountSheet = { isAccountSheetOpen = true }
                     )
 
                     NavigationScreen.TRANSACTIONS -> TransactionsScreen(
@@ -316,6 +383,13 @@ fun ExpenseTrackerApp(viewModel: ExpenseViewModel) {
                         }
                     )
                 }
+
+                // Account Profile & Google Sign-In Bottom Sheet
+                AccountBottomSheet(
+                    viewModel = viewModel,
+                    isOpen = isAccountSheetOpen,
+                    onDismiss = { isAccountSheetOpen = false }
+                )
             }
         }
     }

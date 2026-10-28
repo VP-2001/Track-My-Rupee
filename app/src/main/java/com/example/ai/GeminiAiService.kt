@@ -3,9 +3,15 @@ package com.example.ai
 import android.graphics.Bitmap
 import android.util.Base64
 import com.example.BuildConfig
+import com.example.data.model.BudgetEntity
 import com.example.data.model.DefaultCategories
+import com.example.data.model.ExpenseEntity
+import com.example.data.model.MonthlyAiSpendingReport
+import com.example.data.model.RecurringExpenseEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Calendar
+import kotlin.math.abs
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -990,5 +996,402 @@ class GeminiAiService {
             }
         }
     }
+
+    suspend fun generateMonthlySpendingHabitsReport(
+        monthName: String,
+        year: Int,
+        monthExpenses: List<ExpenseEntity>,
+        budgets: List<BudgetEntity>,
+        recurringExpenses: List<RecurringExpenseEntity>,
+        previousMonthExpenses: List<ExpenseEntity>
+    ): MonthlyAiSpendingReport = withContext(Dispatchers.IO) {
+        val totalSpent = monthExpenses.sumOf { it.amount }
+        val txCount = monthExpenses.size
+        val prevTotal = previousMonthExpenses.sumOf { it.amount }
+
+        val now = Calendar.getInstance()
+        val daysInMonth = now.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(28)
+        val dailyAvg = if (daysInMonth > 0) totalSpent / daysInMonth else 0.0
+
+        val diffAmount = totalSpent - prevTotal
+        val pctChange = if (prevTotal > 0) {
+            ((totalSpent - prevTotal) / prevTotal) * 100.0
+        } else if (totalSpent > 0) {
+            100.0
+        } else {
+            0.0
+        }
+
+        val prevComparisonText = if (previousMonthExpenses.isEmpty() && prevTotal == 0.0) {
+            "First tracked month on record (no prior history)"
+        } else if (diffAmount > 0) {
+            "₹${"%.2f".format(diffAmount)} (+${"%.1f".format(pctChange)}%) higher than previous month"
+        } else if (diffAmount < 0) {
+            "₹${"%.2f".format(abs(diffAmount))} (${"%.1f".format(abs(pctChange))}%) saved compared to previous month"
+        } else {
+            "Identical to previous month"
+        }
+
+        val categoryGroup = monthExpenses.groupBy { it.category }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .toList()
+            .sortedByDescending { it.second }
+
+        val activeRecurring = recurringExpenses.filter { it.isActive }
+        val recurringMonthlyEstimated = activeRecurring.sumOf { rec ->
+            when (rec.frequency) {
+                "DAILY" -> rec.amount * 30
+                "WEEKLY" -> rec.amount * 4.33
+                "YEARLY" -> rec.amount / 12
+                else -> rec.amount
+            }
+        }
+
+        if (apiKey.isNotEmpty() && apiKey != "MY_GEMINI_API_KEY") {
+            try {
+                val prompt = buildMonthlyReportPrompt(
+                    monthName = monthName,
+                    year = year,
+                    totalSpent = totalSpent,
+                    txCount = txCount,
+                    dailyAvg = dailyAvg,
+                    prevComparisonText = prevComparisonText,
+                    categoryGroup = categoryGroup,
+                    budgets = budgets,
+                    activeRecurring = activeRecurring,
+                    recurringMonthlyEstimated = recurringMonthlyEstimated,
+                    monthExpenses = monthExpenses
+                )
+
+                val responseJson = executeGeminiPrompt(prompt)
+                val cleanJson = extractJsonFromResponse(responseJson)
+                val parsed = parseGeminiMonthlyReportJson(
+                    jsonStr = cleanJson,
+                    monthName = monthName,
+                    year = year,
+                    totalSpent = totalSpent,
+                    txCount = txCount,
+                    dailyAvg = dailyAvg,
+                    prevComparisonText = prevComparisonText
+                )
+                if (parsed != null) {
+                    return@withContext parsed
+                }
+            } catch (e: Exception) {
+                // fall through to high fidelity offline generator
+            }
+        }
+
+        generateOfflineMonthlyHabitsReport(
+            monthName = monthName,
+            year = year,
+            totalSpent = totalSpent,
+            txCount = txCount,
+            dailyAvg = dailyAvg,
+            prevComparisonText = prevComparisonText,
+            categoryGroup = categoryGroup,
+            budgets = budgets,
+            activeRecurring = activeRecurring,
+            recurringMonthlyEstimated = recurringMonthlyEstimated,
+            monthExpenses = monthExpenses,
+            pctChange = pctChange
+        )
+    }
+
+    private fun buildMonthlyReportPrompt(
+        monthName: String,
+        year: Int,
+        totalSpent: Double,
+        txCount: Int,
+        dailyAvg: Double,
+        prevComparisonText: String,
+        categoryGroup: List<Pair<String, Double>>,
+        budgets: List<BudgetEntity>,
+        activeRecurring: List<RecurringExpenseEntity>,
+        recurringMonthlyEstimated: Double,
+        monthExpenses: List<ExpenseEntity>
+    ): String {
+        val catBreakdown = if (categoryGroup.isNotEmpty()) {
+            categoryGroup.joinToString("\n") { (c, amt) ->
+                val pct = if (totalSpent > 0) (amt / totalSpent) * 100 else 0.0
+                "- $c: ₹${"%.2f".format(amt)} (${"%.1f".format(pct)}%)"
+            }
+        } else "No expense categories"
+
+        val budgetStatus = if (budgets.isNotEmpty()) {
+            budgets.joinToString("\n") { b ->
+                val spent = categoryGroup.firstOrNull { it.first.equals(b.category, ignoreCase = true) }?.second ?: 0.0
+                val status = if (spent > b.monthlyLimit) "OVER BUDGET by ₹${"%.2f".format(spent - b.monthlyLimit)}" else "Under budget"
+                "- ${b.category}: Limit ₹${b.monthlyLimit}, Spent ₹${"%.2f".format(spent)} ($status)"
+            }
+        } else "No category budgets configured"
+
+        val recurringList = if (activeRecurring.isNotEmpty()) {
+            activeRecurring.joinToString(", ") { "${it.title} (₹${it.amount}/${it.frequency.lowercase()})" }
+        } else "None"
+
+        return """
+            You are a helpful and perceptive personal financial coach for India.
+            Analyze this user's monthly spending records for $monthName $year and produce a natural language summary report of their spending habits.
+
+            DATA SUMMARY:
+            - Month: $monthName $year
+            - Total Outflow: ₹${"%.2f".format(totalSpent)} across $txCount transactions
+            - Average Daily Spend: ₹${"%.2f".format(dailyAvg)}/day
+            - Compared to Previous Month: $prevComparisonText
+            - Category Outflows:
+            $catBreakdown
+            - Active Budgets:
+            $budgetStatus
+            - Active Recurring Subscriptions/Fixed Commitments: ₹${"%.2f".format(recurringMonthlyEstimated)}/mo ($recurringList)
+
+            Respond ONLY with a valid JSON object matching this schema:
+            {
+              "executiveSummary": "3-4 sentence comprehensive natural language review of their financial discipline, lifestyle choices, and habit patterns this month.",
+              "spendingHabitRating": 82,
+              "spendingHabitRatingLabel": "Disciplined Saver",
+              "categoryHabitsInsight": "Natural language review detailing where the bulk of funds flowed and if essential vs discretionary needs were well-balanced.",
+              "recurringImpactInsight": "Natural language review of their fixed commitments (subscriptions, rent, bills) vs discretionary cashflow.",
+              "keyBehavioralObservations": [
+                "Observation 1",
+                "Observation 2",
+                "Observation 3"
+              ],
+              "actionableSavingsTips": [
+                "Specific tip 1 with practical advice",
+                "Specific tip 2 with practical advice",
+                "Specific tip 3 with practical advice"
+              ],
+              "encouragementQuote": "An inspiring sentence for next month's goals"
+            }
+        """.trimIndent()
+    }
+
+    private fun parseGeminiMonthlyReportJson(
+        jsonStr: String,
+        monthName: String,
+        year: Int,
+        totalSpent: Double,
+        txCount: Int,
+        dailyAvg: Double,
+        prevComparisonText: String
+    ): MonthlyAiSpendingReport? {
+        if (jsonStr.isBlank()) return null
+        return try {
+            val root = JSONObject(jsonStr)
+            val execSummary = root.optString("executiveSummary", "")
+            if (execSummary.isBlank()) return null
+
+            val rating = root.optInt("spendingHabitRating", 75).coerceIn(10, 100)
+            val label = root.optString("spendingHabitRatingLabel", "Balanced Spending")
+            val catInsight = root.optString("categoryHabitsInsight", "")
+            val recInsight = root.optString("recurringImpactInsight", "")
+
+            val obsList = mutableListOf<String>()
+            val obsArray = root.optJSONArray("keyBehavioralObservations")
+            if (obsArray != null) {
+                for (i in 0 until obsArray.length()) {
+                    obsList.add(obsArray.optString(i))
+                }
+            }
+
+            val tipsList = mutableListOf<String>()
+            val tipsArray = root.optJSONArray("actionableSavingsTips")
+            if (tipsArray != null) {
+                for (i in 0 until tipsArray.length()) {
+                    tipsList.add(tipsArray.optString(i))
+                }
+            }
+
+            val quote = root.optString("encouragementQuote", "Consistent awareness is the foundation of enduring wealth.")
+
+            MonthlyAiSpendingReport(
+                monthName = monthName,
+                year = year,
+                totalSpent = totalSpent,
+                transactionCount = txCount,
+                dailyAverage = dailyAvg,
+                previousMonthComparisonText = prevComparisonText,
+                executiveSummary = execSummary,
+                spendingHabitRating = rating,
+                spendingHabitRatingLabel = label,
+                categoryHabitsInsight = catInsight,
+                recurringImpactInsight = recInsight,
+                keyBehavioralObservations = obsList.ifEmpty { listOf("Recorded $txCount transactions with regular tracking.") },
+                actionableSavingsTips = tipsList.ifEmpty { listOf("Continue monitoring daily expenses to stay within planned budgets.") },
+                encouragementQuote = quote,
+                isAiGenerated = true
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun generateOfflineMonthlyHabitsReport(
+        monthName: String,
+        year: Int,
+        totalSpent: Double,
+        txCount: Int,
+        dailyAvg: Double,
+        prevComparisonText: String,
+        categoryGroup: List<Pair<String, Double>>,
+        budgets: List<BudgetEntity>,
+        activeRecurring: List<RecurringExpenseEntity>,
+        recurringMonthlyEstimated: Double,
+        monthExpenses: List<ExpenseEntity>,
+        pctChange: Double
+    ): MonthlyAiSpendingReport {
+        val topCategory = categoryGroup.firstOrNull()
+        val secondCategory = categoryGroup.getOrNull(1)
+
+        val overBudgets = budgets.filter { b ->
+            val spent = categoryGroup.firstOrNull { it.first.equals(b.category, ignoreCase = true) }?.second ?: 0.0
+            spent > b.monthlyLimit
+        }
+
+        // Calculate score
+        var score = 80
+        if (pctChange < -5.0) score += 10
+        if (pctChange > 20.0) score -= 15
+        score -= (overBudgets.size * 10)
+        if (topCategory != null && totalSpent > 0 && (topCategory.second / totalSpent) > 0.5) {
+            score -= 5
+        }
+        val clampedScore = score.coerceIn(40, 95)
+
+        val scoreLabel = when {
+            clampedScore >= 85 -> "Disciplined Saver"
+            clampedScore >= 72 -> "Balanced & Mindful"
+            clampedScore >= 58 -> "Moderate Discretionary Burn"
+            else -> "Budget Attention Required"
+        }
+
+        // Executive summary
+        val execSummary = buildString {
+            if (totalSpent == 0.0) {
+                append("No expense transactions were recorded for $monthName $year. Your accounts show complete dormancy for this billing cycle, providing a clean slate for upcoming budgets.")
+            } else {
+                append("In $monthName $year, you logged a total outflow of ₹${"%.2f".format(totalSpent)} across $txCount transactions (averaging ₹${"%.2f".format(dailyAvg)}/day). ")
+                if (pctChange < -2.0) {
+                    append("Your spending contracted by ${"%.1f".format(abs(pctChange))}% compared to the prior period, highlighting commendable fiscal restraint. ")
+                } else if (pctChange > 5.0) {
+                    append("Spending expanded by ${"%.1f".format(pctChange)}% compared to the prior cycle, primarily propelled by ${topCategory?.first ?: "discretionary purchases"}. ")
+                } else {
+                    append("Your spending stayed remarkably steady relative to prior months. ")
+                }
+
+                if (overBudgets.isEmpty()) {
+                    append("All active category budgets were maintained within safe boundaries.")
+                } else {
+                    val names = overBudgets.joinToString(", ") { it.category }
+                    append("However, budget caps were exceeded in $names, which pulled down your overall financial wellness score.")
+                }
+            }
+        }
+
+        // Category insight
+        val catInsight = buildString {
+            if (categoryGroup.isEmpty()) {
+                append("No category distributions are available for this month.")
+            } else {
+                val topCatName = topCategory?.first ?: ""
+                val topCatAmt = topCategory?.second ?: 0.0
+                val topCatPct = if (totalSpent > 0) (topCatAmt / totalSpent) * 100 else 0.0
+                append("$topCatName represented your single largest expense driver at ₹${"%.2f".format(topCatAmt)} (${"%.1f".format(topCatPct)}% of total outflows). ")
+                if (secondCategory != null) {
+                    val secPct = if (totalSpent > 0) (secondCategory.second / totalSpent) * 100 else 0.0
+                    append("This was followed by ${secondCategory.first} at ₹${"%.2f".format(secondCategory.second)} (${"%.1f".format(secPct)}%). ")
+                }
+                append("Concentrating spending reductions on these top categories provides the highest leverage for expanding your monthly savings rate.")
+            }
+        }
+
+        // Recurring insight
+        val recInsight = buildString {
+            if (activeRecurring.isEmpty()) {
+                append("You currently have no automated recurring transactions or subscriptions scheduled. This grants maximum liquidity, though fixed obligations like rent or utilities may be tracked manually.")
+            } else {
+                val recPct = if (totalSpent > 0) (recurringMonthlyEstimated / totalSpent) * 100 else 0.0
+                append("You have ${activeRecurring.size} active recurring commitments (such as ${activeRecurring.take(2).joinToString(" and ") { it.title }}) with an estimated monthly requirement of ₹${"%.2f".format(recurringMonthlyEstimated)} (~${"%.1f".format(recPct)}% of total monthly spend). ")
+                if (recPct > 40) {
+                    append("Your fixed recurring commitments consume a significant share of your budget, leaving tighter headroom for discretionary surprises.")
+                } else {
+                    append("This represents a healthy baseline of fixed obligations, preserving flexible headroom for discretionary needs.")
+                }
+            }
+        }
+
+        // Behavioral observations
+        val observations = mutableListOf<String>()
+        val upiCount = monthExpenses.count { it.paymentMethod.contains("UPI", ignoreCase = true) }
+        val cardCount = monthExpenses.count { it.paymentMethod.contains("Card", ignoreCase = true) }
+        if (upiCount > cardCount && upiCount > 0) {
+            observations.add("UPI was your preferred payment channel ($upiCount transactions), providing rapid micro-transaction settlement.")
+        } else if (cardCount > 0) {
+            observations.add("Cards accounted for $cardCount transactions, enabling structured credit line usage and rewards.")
+        }
+
+        val highestExp = monthExpenses.maxByOrNull { it.amount }
+        if (highestExp != null) {
+            observations.add("Your peak single transaction was '${highestExp.title}' at ₹${"%.2f".format(highestExp.amount)} in ${highestExp.category}.")
+        }
+
+        val weekendSpend = monthExpenses.filter {
+            val c = Calendar.getInstance().apply { timeInMillis = it.date }
+            val day = c.get(Calendar.DAY_OF_WEEK)
+            day == Calendar.SATURDAY || day == Calendar.SUNDAY
+        }.sumOf { it.amount }
+        if (totalSpent > 0) {
+            val weekendPct = (weekendSpend / totalSpent) * 100
+            if (weekendPct > 35) {
+                observations.add("Weekend activity captured ${"%.1f".format(weekendPct)}% of total spending, showing leisure/social spending patterns on Saturdays and Sundays.")
+            } else {
+                observations.add("Spending remained uniformly distributed throughout weekdays and weekends.")
+            }
+        }
+
+        if (observations.isEmpty()) {
+            observations.add("Spending was consistent across all recorded categories.")
+        }
+
+        // Actionable savings tips
+        val tips = mutableListOf<String>()
+        if (topCategory != null && topCategory.second > 1000) {
+            val potentialSavings = topCategory.second * 0.15
+            tips.add("Trim ${topCategory.first} spending by 15% next month to preserve ~₹${"%.0f".format(potentialSavings)} directly into your savings reserve.")
+        }
+        if (overBudgets.isNotEmpty()) {
+            tips.add("Set daily spending alerts for ${overBudgets.first().category} to prevent exceeding your ₹${overBudgets.first().monthlyLimit} ceiling.")
+        }
+        if (activeRecurring.size >= 3) {
+            tips.add("Audit your ${activeRecurring.size} recurring subscriptions to eliminate services unused in the last 30 days.")
+        }
+        tips.add("Aim to maintain your daily burn rate under ₹${"%.0f".format(dailyAvg * 0.9)} for the first 10 days of next month.")
+
+        val quote = when {
+            clampedScore >= 80 -> "“Financial peace isn't the acquisition of stuff; it's learning to live on less than you make.”"
+            clampedScore >= 65 -> "“Small daily leaks sink great financial ships. Mind the micro-spends, and wealth compounds naturally.”"
+            else -> "“A budget isn't a restriction on your freedom; it is permission to spend intentionally on what matters most.”"
+        }
+
+        return MonthlyAiSpendingReport(
+            monthName = monthName,
+            year = year,
+            totalSpent = totalSpent,
+            transactionCount = txCount,
+            dailyAverage = dailyAvg,
+            previousMonthComparisonText = prevComparisonText,
+            executiveSummary = execSummary,
+            spendingHabitRating = clampedScore,
+            spendingHabitRatingLabel = scoreLabel,
+            categoryHabitsInsight = catInsight,
+            recurringImpactInsight = recInsight,
+            keyBehavioralObservations = observations,
+            actionableSavingsTips = tips,
+            encouragementQuote = quote,
+            isAiGenerated = true
+        )
+    }
 }
+
 

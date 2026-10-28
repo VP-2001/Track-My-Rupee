@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.userId == userId &&
+        data.email is string &&
+        data.email.size() > 0 &&
+        data.email.size() <= 200 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+        (!('lastSyncedAt' in data) || data.lastSyncedAt is timestamp);
+    }
+
+    function isValidExpense(data, userId) {
+      return data.userId == userId &&
+        data.title is string &&
+        data.title.size() > 0 &&
+        data.title.size() <= 200 &&
+        data.amount is number &&
+        data.amount >= 0 &&
+        data.date is number &&
+        data.category is string &&
+        data.category.size() > 0 &&
+        data.category.size() <= 100 &&
+        data.paymentMethod is string &&
+        data.paymentMethod.size() > 0 &&
+        data.paymentMethod.size() <= 100 &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+        (!('tag' in data) || (data.tag is string && data.tag.size() <= 100)) &&
+        (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 100)) &&
+        (!('creditCardName' in data) || (data.creditCardName is string && data.creditCardName.size() <= 100)) &&
+        (!('receiptUri' in data) || data.receiptUri == null || (data.receiptUri is string && data.receiptUri.size() <= 500)) &&
+        (!('localId' in data) || data.localId is number) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUserProfile(request.resource.data, userId);
+      allow delete: if isOwner(userId);
+
+      match /expenses/{expenseId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidExpense(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

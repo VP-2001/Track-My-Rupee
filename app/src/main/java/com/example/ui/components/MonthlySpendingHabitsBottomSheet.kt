@@ -112,6 +112,7 @@ fun MonthlySpendingHabitsBottomSheet(
     onDismiss: () -> Unit,
     onNavigateToAnalytics: (() -> Unit)? = null,
     onNavigateToTransactions: (() -> Unit)? = null,
+    viewModel: com.example.ui.viewmodel.ExpenseViewModel? = null,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
 ) {
     ModalBottomSheet(
@@ -193,6 +194,13 @@ fun MonthlySpendingHabitsBottomSheet(
 
             // 2. Previous Month Comparison Card
             MonthOverMonthComparisonCard(summary = summary)
+
+            // 2.5 Gemini AI End-of-Month Review & Habits Summary
+            if (viewModel != null) {
+                MonthlyAiSpendingReportCard(
+                    viewModel = viewModel
+                )
+            }
 
             // 3. Top Category Spotlight Card (Prominently Highlighted)
             if (summary.topCategory != null) {

@@ -27,10 +27,13 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
+import com.example.ui.theme.DangerRed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -390,7 +393,69 @@ fun ExportDateReportDialog(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    var selectedMonthlyFormat by remember { mutableStateOf("PDF") }
+
+                    Text(
+                        text = "Select Export Format:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SophisticatedDarkOnSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedMonthlyFormat == "PDF",
+                            onClick = { selectedMonthlyFormat = "PDF" },
+                            label = { Text("PDF", fontWeight = if (selectedMonthlyFormat == "PDF") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = DangerRed, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = DangerRed.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedMonthlyFormat == "PDF") DangerRed else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedMonthlyFormat == "CSV",
+                            onClick = { selectedMonthlyFormat = "CSV" },
+                            label = { Text("CSV", fontWeight = if (selectedMonthlyFormat == "CSV") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Description, contentDescription = null, tint = SophisticatedPrimary, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SophisticatedPrimary.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedMonthlyFormat == "CSV") SophisticatedPrimary else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedMonthlyFormat == "EXCEL",
+                            onClick = { selectedMonthlyFormat = "EXCEL" },
+                            label = { Text("Excel", fontWeight = if (selectedMonthlyFormat == "EXCEL") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.TableChart, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SuccessGreen.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedMonthlyFormat == "EXCEL") SuccessGreen else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Action Buttons: Download & Share
                     Row(
@@ -399,11 +464,15 @@ fun ExportDateReportDialog(
                     ) {
                         Button(
                             onClick = {
-                                val file = viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth)
+                                val (file, mime) = when (selectedMonthlyFormat) {
+                                    "PDF" -> Pair(viewModel.exportMonthlyPdfReport(selectedYear, selectedMonth), "application/pdf")
+                                    "CSV" -> Pair(viewModel.exportMonthlyCsvReport(selectedYear, selectedMonth), "text/csv")
+                                    else -> Pair(viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                                }
                                 val (saved, msg) = ReportExportManager.saveToDownloads(
                                     context,
                                     file,
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    mime
                                 )
                                 Toast.makeText(context, if (saved) "Saved to Downloads: ${file.name}" else msg, Toast.LENGTH_LONG).show()
                                 onDismissRequest()
@@ -413,24 +482,32 @@ fun ExportDateReportDialog(
                                 .height(48.dp)
                                 .testTag("download_monthly_excel_button"),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = SuccessGreen,
+                                containerColor = when (selectedMonthlyFormat) {
+                                    "PDF" -> DangerRed
+                                    "CSV" -> SophisticatedPrimary
+                                    else -> SuccessGreen
+                                },
                                 contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Icon(Icons.Default.Download, contentDescription = "Download Excel", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Download, contentDescription = "Download Report", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download (.xlsx)", fontWeight = FontWeight.Bold)
+                            Text("Download ($selectedMonthlyFormat)", fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
                             onClick = {
-                                val file = viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth)
+                                val (file, mime) = when (selectedMonthlyFormat) {
+                                    "PDF" -> Pair(viewModel.exportMonthlyPdfReport(selectedYear, selectedMonth), "application/pdf")
+                                    "CSV" -> Pair(viewModel.exportMonthlyCsvReport(selectedYear, selectedMonth), "text/csv")
+                                    else -> Pair(viewModel.exportMonthlyExcelReport(selectedYear, selectedMonth), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                                }
                                 ReportExportManager.shareFile(
                                     context,
                                     file,
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    "Monthly Expense Report - $monthFormatted"
+                                    mime,
+                                    "Monthly Expense Report ($selectedMonthlyFormat) - $monthFormatted"
                                 )
                                 onDismissRequest()
                             },
@@ -440,7 +517,7 @@ fun ExportDateReportDialog(
                                 .testTag("share_monthly_excel_button"),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = "Share Excel", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Share, contentDescription = "Share Report", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Share")
                         }
@@ -728,7 +805,69 @@ fun ExportDateReportDialog(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    var selectedCustomFormat by remember { mutableStateOf("PDF") }
+
+                    Text(
+                        text = "Select Export Format:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SophisticatedDarkOnSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedCustomFormat == "PDF",
+                            onClick = { selectedCustomFormat = "PDF" },
+                            label = { Text("PDF", fontWeight = if (selectedCustomFormat == "PDF") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = DangerRed, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = DangerRed.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedCustomFormat == "PDF") DangerRed else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedCustomFormat == "CSV",
+                            onClick = { selectedCustomFormat = "CSV" },
+                            label = { Text("CSV", fontWeight = if (selectedCustomFormat == "CSV") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Description, contentDescription = null, tint = SophisticatedPrimary, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SophisticatedPrimary.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedCustomFormat == "CSV") SophisticatedPrimary else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedCustomFormat == "EXCEL",
+                            onClick = { selectedCustomFormat = "EXCEL" },
+                            label = { Text("Excel", fontWeight = if (selectedCustomFormat == "EXCEL") FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Default.TableChart, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SuccessGreen.copy(alpha = 0.2f),
+                                selectedLabelColor = SophisticatedDarkOnSurface
+                            ),
+                            border = BorderStroke(1.dp, if (selectedCustomFormat == "EXCEL") SuccessGreen else SophisticatedDarkBorder),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Action Buttons: Download & Share
                     Row(
@@ -737,11 +876,15 @@ fun ExportDateReportDialog(
                     ) {
                         Button(
                             onClick = {
-                                val file = viewModel.exportCustomDateExcelReport(customStartDate, customEndDate)
+                                val (file, mime) = when (selectedCustomFormat) {
+                                    "PDF" -> Pair(viewModel.exportCustomDatePdfReport(customStartDate, customEndDate), "application/pdf")
+                                    "CSV" -> Pair(viewModel.exportCustomDateCsvReport(customStartDate, customEndDate), "text/csv")
+                                    else -> Pair(viewModel.exportCustomDateExcelReport(customStartDate, customEndDate), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                                }
                                 val (saved, msg) = ReportExportManager.saveToDownloads(
                                     context,
                                     file,
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    mime
                                 )
                                 Toast.makeText(context, if (saved) "Saved to Downloads: ${file.name}" else msg, Toast.LENGTH_LONG).show()
                                 onDismissRequest()
@@ -751,26 +894,34 @@ fun ExportDateReportDialog(
                                 .height(48.dp)
                                 .testTag("download_custom_excel_button"),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = SuccessGreen,
+                                containerColor = when (selectedCustomFormat) {
+                                    "PDF" -> DangerRed
+                                    "CSV" -> SophisticatedPrimary
+                                    else -> SuccessGreen
+                                },
                                 contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Icon(Icons.Default.Download, contentDescription = "Download Excel", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Download, contentDescription = "Download Report", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download (.xlsx)", fontWeight = FontWeight.Bold)
+                            Text("Download ($selectedCustomFormat)", fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
                             onClick = {
-                                val file = viewModel.exportCustomDateExcelReport(customStartDate, customEndDate)
+                                val (file, mime) = when (selectedCustomFormat) {
+                                    "PDF" -> Pair(viewModel.exportCustomDatePdfReport(customStartDate, customEndDate), "application/pdf")
+                                    "CSV" -> Pair(viewModel.exportCustomDateCsvReport(customStartDate, customEndDate), "text/csv")
+                                    else -> Pair(viewModel.exportCustomDateExcelReport(customStartDate, customEndDate), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                                }
                                 val startStr = sdfDisplay.format(Date(minOf(customStartDate, customEndDate)))
                                 val endStr = sdfDisplay.format(Date(maxOf(customStartDate, customEndDate)))
                                 ReportExportManager.shareFile(
                                     context,
                                     file,
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    "Custom Expense Report ($startStr to $endStr)"
+                                    mime,
+                                    "Custom Expense Report ($selectedCustomFormat) - $startStr to $endStr"
                                 )
                                 onDismissRequest()
                             },
@@ -780,7 +931,7 @@ fun ExportDateReportDialog(
                                 .testTag("share_custom_excel_button"),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = "Share Excel", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Share, contentDescription = "Share Report", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Share")
                         }

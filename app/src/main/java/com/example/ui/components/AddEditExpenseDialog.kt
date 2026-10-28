@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.app.DatePickerDialog
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +33,7 @@ import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyRupee
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventRepeat
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.ShoppingBag
@@ -49,12 +54,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,6 +75,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.ExtractedTransaction
 import com.example.data.model.DefaultCategories
@@ -140,6 +149,19 @@ fun AddEditExpenseBottomSheet(
             expenseToEdit?.date ?: initialPreFill?.date ?: System.currentTimeMillis()
         )
     }
+
+    var isRecurring by remember { mutableStateOf(false) }
+    var recurringFrequency by remember { mutableStateOf("MONTHLY") }
+    var recurringDayOfMonth by remember {
+        val cal = Calendar.getInstance()
+        mutableIntStateOf(cal.get(Calendar.DAY_OF_MONTH))
+    }
+    var recurringDayOfWeek by remember {
+        val cal = Calendar.getInstance()
+        mutableIntStateOf(cal.get(Calendar.DAY_OF_WEEK))
+    }
+    var recurringTag by remember { mutableStateOf("Subscription") }
+    var autoRecordRecurring by remember { mutableStateOf(true) }
 
     var isAiCategorizing by remember { mutableStateOf(false) }
     val cardSuggestions by viewModel.cardSuggestions.collectAsStateWithLifecycle()
@@ -587,6 +609,205 @@ fun AddEditExpenseBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            // Recurring Schedule Card (Repeat this transaction)
+            if (expenseToEdit == null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = com.example.ui.theme.SophisticatedDarkSurfaceVariant,
+                    border = BorderStroke(1.dp, if (isRecurring) com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.5f) else com.example.ui.theme.SophisticatedDarkBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("recurring_toggle_card")
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isRecurring) com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.2f) else com.example.ui.theme.SophisticatedDarkSurfaceDim),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.EventRepeat,
+                                        contentDescription = "Recurring",
+                                        tint = if (isRecurring) com.example.ui.theme.SophisticatedPrimary else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = "Repeat this transaction (Recurring)",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurface
+                                    )
+                                    Text(
+                                        text = "Auto-add to Room DB on scheduled intervals",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = isRecurring,
+                                onCheckedChange = { isRecurring = it },
+                                modifier = Modifier.testTag("repeat_transaction_switch")
+                            )
+                        }
+
+                        if (isRecurring) {
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Frequency Selector
+                            Text(
+                                text = "Scheduled Interval / Frequency",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = com.example.ui.theme.SophisticatedPrimary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("MONTHLY" to "Monthly", "WEEKLY" to "Weekly", "YEARLY" to "Yearly", "DAILY" to "Daily").forEach { (f, label) ->
+                                    FilterChip(
+                                        selected = recurringFrequency == f,
+                                        onClick = { recurringFrequency = f },
+                                        label = { Text(label, fontSize = 11.sp) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Day of Month / Day of Week
+                            if (recurringFrequency == "MONTHLY" || recurringFrequency == "YEARLY") {
+                                Text(
+                                    text = "Repeat on Day of Month",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    (1..31).forEach { day ->
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (recurringDayOfMonth == day) com.example.ui.theme.SophisticatedPrimary else com.example.ui.theme.SophisticatedDarkSurfaceDim,
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clickable { recurringDayOfMonth = day }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = day.toString(),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (recurringDayOfMonth == day) Color.Black else com.example.ui.theme.SophisticatedDarkOnSurface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (recurringFrequency == "WEEKLY") {
+                                Text(
+                                    text = "Repeat on Day of Week",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val days = listOf("Sun" to 1, "Mon" to 2, "Tue" to 3, "Wed" to 4, "Thu" to 5, "Fri" to 6, "Sat" to 7)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    days.forEach { (name, num) ->
+                                        FilterChip(
+                                            selected = recurringDayOfWeek == num,
+                                            onClick = { recurringDayOfWeek = num },
+                                            label = { Text(name, fontSize = 11.sp) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Recurring Tag
+                            Text(
+                                text = "Recurring Type / Tag",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("Subscription", "Rent", "Fixed Bill", "EMI", "Insurance", "Utility").forEach { t ->
+                                    FilterChip(
+                                        selected = recurringTag == t,
+                                        onClick = { recurringTag = t },
+                                        label = { Text(t, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Auto-Record Switch
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Auto-add to ledger when due",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurface
+                                    )
+                                    Text(
+                                        text = "Automatically writes to Room DB expenses table",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = autoRecordRecurring,
+                                    onCheckedChange = { autoRecordRecurring = it },
+                                    modifier = Modifier.testTag("auto_record_recurring_switch")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Save & Delete Buttons
@@ -639,6 +860,24 @@ fun AddEditExpenseBottomSheet(
                                     bankName = bankName.trim(),
                                     creditCardName = creditCardName.trim()
                                 )
+
+                                // If user defined this as a recurring transaction, insert recurring schedule into Room DB
+                                if (isRecurring) {
+                                    viewModel.addRecurringExpense(
+                                        title = title.trim(),
+                                        amount = amt,
+                                        category = selectedCategory,
+                                        frequency = recurringFrequency,
+                                        dayOfMonth = recurringDayOfMonth,
+                                        dayOfWeek = recurringDayOfWeek,
+                                        paymentMethod = selectedPaymentMethod,
+                                        bankName = bankName.trim(),
+                                        creditCardName = creditCardName.trim(),
+                                        tag = recurringTag,
+                                        notes = notes.trim(),
+                                        autoCreateExpense = autoRecordRecurring
+                                    )
+                                }
                             }
                             onDismiss()
                         }
@@ -650,7 +889,7 @@ fun AddEditExpenseBottomSheet(
                         .testTag("save_expense_button")
                 ) {
                     Text(
-                        text = if (expenseToEdit != null) "Update Expense" else "Save Expense",
+                        text = if (expenseToEdit != null) "Update Expense" else if (isRecurring) "Save & Schedule" else "Save Expense",
                         fontWeight = FontWeight.Bold
                     )
                 }

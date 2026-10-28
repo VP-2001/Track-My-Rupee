@@ -24,18 +24,35 @@ import com.example.data.model.ExpenseEntity
 import com.example.data.model.MerchantCrossMonthItem
 import com.example.data.model.MerchantMonthlySpend
 import com.example.data.model.MonthlyBreakdownItem
+import com.example.data.model.CategoryBudgetComparisonItem
+import com.example.data.model.CategoryMultiMonthTrendPoint
 import com.example.data.model.MonthlyBudgetHabitStatus
+import com.example.data.model.MonthlyCategoryBudgetReport
+import com.example.data.model.MonthlyBudgetTrendCalculator
+import com.example.data.model.MonthlyBudgetTrendPoint
+import com.example.data.model.MonthlyBudgetTrendSummary
 import com.example.data.model.MonthlyComparisonReport
+import com.example.data.model.MonthlyAiSpendingReport
 import com.example.data.model.MonthlyExpenseReportDetail
 import com.example.data.model.MonthlySpendingHabitsSummary
 import com.example.data.model.MonthlyTrendData
 import com.example.data.model.OneYearGrowthSummary
 import com.example.data.model.PaymentMethodSummary
+import com.example.data.model.RecurringDateUtils
+import com.example.data.model.RecurringExpenseEntity
+import com.example.data.model.RecurringFrequency
 import com.example.data.model.SixMonthGrowthSummary
 import com.example.data.model.SyncLogEntity
 import com.example.data.repository.CreditCardSuggestionsManager
+import com.example.auth.AuthManager
+import com.example.data.firestore.FirestoreSyncRepository
+import com.example.data.firestore.SyncSummary
 import com.example.data.repository.ExpenseRepository
 import com.example.export.ReportExportManager
+import com.example.notification.BudgetNotificationService
+import com.google.firebase.auth.FirebaseUser
+import com.example.notification.BudgetAlertThreshold
+import com.example.notification.BudgetAlertResult
 import com.example.security.CryptoBackupManager
 import com.example.security.SecurityAndSyncManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +60,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -71,9 +89,10 @@ enum class SortType(val label: String) {
 }
 
 enum class SearchFilterScope(val label: String, val hint: String) {
-    ALL("All", "Search category, date, or merchant name..."),
-    MERCHANT("Merchant", "Filter by merchant name (e.g. Amazon, Swiggy)..."),
+    ALL("All", "Search merchant, category, notes, or date..."),
+    MERCHANT("Merchant", "Filter by merchant / title (e.g. Amazon, Swiggy)..."),
     CATEGORY("Category", "Filter by category (e.g. Food, Travel, Utilities)..."),
+    NOTES("Notes", "Filter by note content (e.g. Dinner, Gift, Refund)..."),
     DATE("Date", "Filter by date (e.g. Oct, 16 Oct, 2026, Today)...")
 }
 
@@ -95,13 +114,179 @@ data class AvailableMonth(
     val totalSpent: Double
 )
 
+sealed interface MonthlyAiReportUiState {
+    data object Idle : MonthlyAiReportUiState
+    data class Loading(val monthName: String) : MonthlyAiReportUiState
+    data class Success(val report: MonthlyAiSpendingReport) : MonthlyAiReportUiState
+    data class Error(val message: String) : MonthlyAiReportUiState
+}
+
 class ExpenseViewModel(application: Application) : AndroidViewModel(application) {
     private val db = ExpenseDatabase.getDatabase(application)
-    val repository = ExpenseRepository(db.expenseDao(), db.budgetDao(), db.syncLogDao())
+    val repository = ExpenseRepository(db.expenseDao(), db.budgetDao(), db.syncLogDao(), db.recurringExpenseDao())
     val geminiService = GeminiAiService()
     val securityManager = SecurityAndSyncManager(application)
     val cardSuggestionsManager = CreditCardSuggestionsManager(application)
     val cardSuggestions: StateFlow<List<CreditCardSuggestion>> = cardSuggestionsManager.suggestions
+
+    val authManager = AuthManager(application)
+    val currentUser: StateFlow<FirebaseUser?> = authManager.currentUser
+    val isAuthenticating: StateFlow<Boolean> = authManager.isAuthenticating
+    val authErrorMessage: StateFlow<String?> = authManager.authErrorMessage
+
+    val firestoreSyncRepository = FirestoreSyncRepository(application)
+    private val _isCloudSyncing = MutableStateFlow(false)
+    val isCloudSyncing: StateFlow<Boolean> = _isCloudSyncing.asStateFlow()
+    private val _syncSummary = MutableStateFlow<SyncSummary?>(null)
+    val syncSummary: StateFlow<SyncSummary?> = _syncSummary.asStateFlow()
+
+    // Gemini Monthly AI Spending Habits Report
+    private val _monthlyAiReportState = MutableStateFlow<MonthlyAiReportUiState>(MonthlyAiReportUiState.Idle)
+    val monthlyAiReportState: StateFlow<MonthlyAiReportUiState> = _monthlyAiReportState.asStateFlow()
+
+    fun generateMonthlyAiSpendingReport(
+        year: Int? = null,
+        month: Int? = null, // 1..12
+        forceRefresh: Boolean = false
+    ) {
+        val targetCal = Calendar.getInstance()
+        if (year != null && month != null) {
+            targetCal.set(Calendar.YEAR, year)
+            targetCal.set(Calendar.MONTH, month - 1)
+        }
+        val targetMonthName = SimpleDateFormat("MMMM", Locale.getDefault()).format(targetCal.time)
+        val targetYear = targetCal.get(Calendar.YEAR)
+
+        val currentState = _monthlyAiReportState.value
+        if (!forceRefresh && currentState is MonthlyAiReportUiState.Success &&
+            currentState.report.monthName.equals(targetMonthName, ignoreCase = true) &&
+            currentState.report.year == targetYear
+        ) {
+            return
+        }
+
+        viewModelScope.launch {
+            _monthlyAiReportState.value = MonthlyAiReportUiState.Loading(targetMonthName)
+            try {
+                val startCal = (targetCal.clone() as Calendar).apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val endCal = (targetCal.clone() as Calendar).apply {
+                    set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }
+
+                val prevMonthCal = (targetCal.clone() as Calendar).apply {
+                    add(Calendar.MONTH, -1)
+                }
+                val prevStartCal = (prevMonthCal.clone() as Calendar).apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val prevEndCal = (prevMonthCal.clone() as Calendar).apply {
+                    set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }
+
+                val allExp = repository.allExpenses.first()
+                val allBudgets = repository.allBudgets.first()
+                val allRecurring = repository.allRecurringExpenses.first()
+
+                val monthExpenses = allExp.filter { it.date in startCal.timeInMillis..endCal.timeInMillis }
+                val prevMonthExpenses = allExp.filter { it.date in prevStartCal.timeInMillis..prevEndCal.timeInMillis }
+
+                val report = geminiService.generateMonthlySpendingHabitsReport(
+                    monthName = targetMonthName,
+                    year = targetYear,
+                    monthExpenses = monthExpenses,
+                    budgets = allBudgets,
+                    recurringExpenses = allRecurring,
+                    previousMonthExpenses = prevMonthExpenses
+                )
+
+                _monthlyAiReportState.value = MonthlyAiReportUiState.Success(report)
+            } catch (e: Exception) {
+                _monthlyAiReportState.value = MonthlyAiReportUiState.Error(e.message ?: "Failed to generate report")
+            }
+        }
+    }
+
+    fun signInWithGoogle(activityContext: android.content.Context, onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            val result = authManager.signInWithGoogle(activityContext)
+            if (result.isSuccess) {
+                val user = result.getOrNull()
+                val name = user?.displayName ?: "User"
+                val email = user?.email ?: ""
+                _syncMessage.value = "Signed in as $name. Syncing with Firestore..."
+                securityManager.signInGoogle(email)
+                repository.addSyncLog("SIGN_IN", 0, "SUCCESS", email, "Connected Google Account: $name ($email)")
+                // Automatically synchronize local Room DB records with Firebase Firestore
+                syncFirestoreTransactions()
+                onComplete?.invoke(true)
+            } else {
+                onComplete?.invoke(false)
+            }
+        }
+    }
+
+    fun syncFirestoreTransactions(onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            if (!firestoreSyncRepository.isUserSignedIn()) {
+                _syncMessage.value = "Please sign in with Google to sync transactions to Firebase Firestore."
+                onComplete?.invoke(false)
+                return@launch
+            }
+            _isCloudSyncing.value = true
+            _syncMessage.value = "Synchronizing ledger with Firebase Firestore..."
+            try {
+                val result = firestoreSyncRepository.syncWithRoom(repository)
+                if (result.isSuccess) {
+                    val summary = result.getOrNull()
+                    _syncSummary.value = summary
+                    securityManager.recordSyncSuccess()
+                    _syncMessage.value = summary?.message ?: "Transactions successfully synchronized with Firestore!"
+                    onComplete?.invoke(true)
+                } else {
+                    val err = result.exceptionOrNull()?.localizedMessage ?: "Sync failed"
+                    _syncMessage.value = "Firestore sync error: $err"
+                    onComplete?.invoke(false)
+                }
+            } catch (e: Exception) {
+                _syncMessage.value = "Sync exception: ${e.message}"
+                onComplete?.invoke(false)
+            } finally {
+                _isCloudSyncing.value = false
+            }
+        }
+    }
+
+    fun signOut(onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            authManager.signOut()
+            securityManager.signOutGoogle()
+            repository.addSyncLog("SIGN_OUT", 0, "SUCCESS", "Local Vault", "Signed out of Google Account")
+            _syncMessage.value = "Signed out. Local ledger remains intact."
+            onComplete?.invoke()
+        }
+    }
+
+    fun clearAuthError() {
+        authManager.clearError()
+    }
 
     fun addCardSuggestion(name: String, issuerBank: String, isRuPay: Boolean = false) {
         cardSuggestionsManager.addSuggestion(name, issuerBank, isRuPay)
@@ -118,6 +303,122 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     fun resetCardSuggestions() {
         cardSuggestionsManager.resetToDefaults()
     }
+
+    // Recurring Expenses
+    val allRecurringExpenses: StateFlow<List<RecurringExpenseEntity>> = repository.allRecurringExpenses.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val activeRecurringExpenses: StateFlow<List<RecurringExpenseEntity>> = repository.activeRecurringExpenses.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val upcomingRecurringBills: StateFlow<List<RecurringExpenseEntity>> = repository.activeRecurringExpenses.map { list ->
+        list.sortedBy { it.nextDueDate }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    private val _recurringActionMessage = MutableStateFlow<String?>(null)
+    val recurringActionMessage: StateFlow<String?> = _recurringActionMessage.asStateFlow()
+
+    fun clearRecurringActionMessage() {
+        _recurringActionMessage.value = null
+    }
+
+    fun addRecurringExpense(
+        title: String,
+        amount: Double,
+        category: String,
+        frequency: String,
+        dayOfMonth: Int = 1,
+        dayOfWeek: Int = 2,
+        paymentMethod: String = "UPI",
+        bankName: String = "",
+        creditCardName: String = "",
+        notes: String = "",
+        tag: String = "Subscription",
+        autoCreateExpense: Boolean = true,
+        startDate: Long = System.currentTimeMillis(),
+        endDate: Long? = null
+    ) {
+        viewModelScope.launch {
+            val initialDue = RecurringDateUtils.computeInitialDueDate(
+                frequency = frequency,
+                startDate = startDate,
+                dayOfMonth = dayOfMonth,
+                dayOfWeek = dayOfWeek
+            )
+            val entity = RecurringExpenseEntity(
+                title = title.trim(),
+                amount = amount,
+                category = category,
+                paymentMethod = paymentMethod,
+                frequency = frequency,
+                dayOfMonth = dayOfMonth,
+                dayOfWeek = dayOfWeek,
+                startDate = startDate,
+                endDate = endDate,
+                nextDueDate = initialDue,
+                isActive = true,
+                bankName = bankName,
+                creditCardName = creditCardName,
+                notes = notes.trim(),
+                tag = tag,
+                autoCreateExpense = autoCreateExpense
+            )
+            repository.insertRecurringExpense(entity)
+            _recurringActionMessage.value = "Scheduled recurring: ${entity.title}"
+            processDueRecurringExpenses()
+        }
+    }
+
+    fun updateRecurringExpense(item: RecurringExpenseEntity) {
+        viewModelScope.launch {
+            repository.updateRecurringExpense(item)
+            _recurringActionMessage.value = "Updated: ${item.title}"
+            processDueRecurringExpenses()
+        }
+    }
+
+    fun toggleRecurringExpenseActive(id: Long, isActive: Boolean) {
+        viewModelScope.launch {
+            repository.toggleRecurringExpenseActive(id, isActive)
+            _recurringActionMessage.value = if (isActive) "Resumed recurring schedule" else "Paused recurring schedule"
+        }
+    }
+
+    fun deleteRecurringExpense(id: Long) {
+        viewModelScope.launch {
+            repository.deleteRecurringExpenseById(id)
+            _recurringActionMessage.value = "Deleted recurring schedule"
+        }
+    }
+
+    fun executeRecurringExpenseNow(id: Long) {
+        viewModelScope.launch {
+            val created = repository.executeRecurringExpenseNow(id)
+            if (created != null) {
+                _recurringActionMessage.value = "Recorded bill: ${created.title} (${created.formattedAmount})"
+            }
+        }
+    }
+
+    fun processDueRecurringExpenses() {
+        viewModelScope.launch {
+            val created = repository.processDueRecurringExpenses()
+            if (created.isNotEmpty()) {
+                _recurringActionMessage.value = "Auto-created ${created.size} recurring bill(s): ${created.take(2).joinToString { it.title }}"
+            }
+        }
+    }
+
 
     // Filter & Search States
     private val _searchQuery = MutableStateFlow("")
@@ -443,6 +744,43 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 })
             }
             put("recent_transactions", recentTxArr)
+
+            val recurringList = allRecurringExpenses.value.filter { it.isActive }
+            val totalMonthlyRecurringCommitment = recurringList.sumOf {
+                when (it.frequency.uppercase(Locale.ROOT)) {
+                    "DAILY" -> it.amount * 30
+                    "WEEKLY" -> it.amount * 4.33
+                    "YEARLY" -> it.amount / 12
+                    else -> it.amount
+                }
+            }
+            val recurringArr = JSONArray()
+            recurringList.forEach { r ->
+                recurringArr.put(JSONObject().apply {
+                    put("title", r.title)
+                    put("amount", r.amount)
+                    put("frequency", r.frequency)
+                    put("category", r.category)
+                    put("next_due", r.formattedNextDue)
+                    put("days_until_due", r.daysUntilDue)
+                    put("auto_create", r.autoCreateExpense)
+                })
+            }
+            put("recurring_commitments", JSONObject().apply {
+                put("monthly_estimated_total", totalMonthlyRecurringCommitment)
+                put("active_count", recurringList.size)
+                put("items", recurringArr)
+            })
+        }
+
+        val recurringList = allRecurringExpenses.value.filter { it.isActive }
+        val totalMonthlyRecurringCommitment = recurringList.sumOf {
+            when (it.frequency.uppercase(Locale.ROOT)) {
+                "DAILY" -> it.amount * 30
+                "WEEKLY" -> it.amount * 4.33
+                "YEARLY" -> it.amount / 12
+                else -> it.amount
+            }
         }
 
         return """
@@ -462,9 +800,10 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                - If is_over_budget is true, explicitly alert the user about the overage.
             5. PAYMENT METHODS: Quote from `payment_methods_breakdown`.
             6. HIGHEST EXPENSES: If the user asks for their biggest/highest single expense, quote from `top_single_expenses`.
-            7. ADVICE & COST-CUTTING: Offer realistic, actionable financial strategies tailored specifically to their top spending categories and peak transactions.
-            8. GENERAL FINANCE: If asked general financial questions (investing, 50/30/20 rule, emergency funds, inflation, debt payoff), provide clear, educationally sound advice.
-            9. FORMATTING: Use localized Indian Rupee formatting (₹) for all currency amounts. Use clean bullet points, bold key figures, and concise paragraphs for mobile readability.
+            7. RECURRING BILLS & SUBSCRIPTIONS: Reference `recurring_commitments` (~₹${"%.2f".format(totalMonthlyRecurringCommitment)}/month committed).
+            8. ADVICE & COST-CUTTING: Offer realistic, actionable financial strategies tailored specifically to their top spending categories and peak transactions.
+            9. GENERAL FINANCE: If asked general financial questions (investing, 50/30/20 rule, emergency funds, inflation, debt payoff), provide clear, educationally sound advice.
+            10. FORMATTING: Use localized Indian Rupee formatting (₹) for all currency amounts. Use clean bullet points, bold key figures, and concise paragraphs for mobile readability.
             
             LIVE USER FINANCIAL CONTEXT (FROM ROOM DATABASE - STRUCTURED JSON):
             ```json
@@ -485,6 +824,8 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             $thisMonthCategoryStr
             - Active Budgets & Adherence:
             ${budgetSummaries.joinToString("\n").ifEmpty { "No category budgets set" }}
+            - Active Recurring Bills & Subscriptions (~₹${"%.2f".format(totalMonthlyRecurringCommitment)}/month):
+            ${recurringList.joinToString("\n") { "- ${it.title}: ₹${"%.2f".format(it.amount)} (${it.frequency}, next due ${it.formattedNextDue})" }.ifEmpty { "No recurring bills set" }}
             - Recent Transactions Ledger:
             ${recentTransactions.joinToString("\n").ifEmpty { "No recent transactions" }}
         """.trimIndent()
@@ -495,6 +836,10 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             // Purge all false starter/sample seeded data immediately
             repository.purgeSampleSeedData()
+            // Check and automatically create entries for any due recurring bills
+            repository.processDueRecurringExpenses()
+            // Silent auto sign-in if account is already authorized on this device
+            authManager.attemptAutoSignIn()
         }
     }
 
@@ -546,15 +891,17 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val yestCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
 
             list = list.filter { expense ->
-                // Merchant Name Matching (title / notes / bank / credit card)
+                // Merchant Name Matching (title / bank / credit card)
                 val matchesMerchant = expense.title.lowercase().contains(q) ||
-                        expense.notes.lowercase().contains(q) ||
                         expense.bankName.lowercase().contains(q) ||
                         expense.creditCardName.lowercase().contains(q)
 
                 // Category Matching (category / tag)
                 val matchesCategory = expense.category.lowercase().contains(q) ||
                         expense.tag.lowercase().contains(q)
+
+                // Notes Matching
+                val matchesNotes = expense.notes.lowercase().contains(q)
 
                 // Date Matching (formatted date strings, month names, year, day, today/yesterday)
                 val dateObj = Date(expense.date)
@@ -593,8 +940,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 when (scope) {
                     SearchFilterScope.MERCHANT -> matchesMerchant
                     SearchFilterScope.CATEGORY -> matchesCategory
+                    SearchFilterScope.NOTES -> matchesNotes
                     SearchFilterScope.DATE -> matchesDate
-                    SearchFilterScope.ALL -> matchesMerchant || matchesCategory || matchesDate ||
+                    SearchFilterScope.ALL -> matchesMerchant || matchesCategory || matchesNotes || matchesDate ||
                             expense.paymentMethod.lowercase().contains(q) ||
                             expense.amount.toString().contains(q)
                 }
@@ -774,6 +1122,83 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    // Budget Alerts Monitoring State & Controls
+    private val _lastBudgetAlertResults = MutableStateFlow<List<BudgetAlertResult>>(emptyList())
+    val lastBudgetAlertResults: StateFlow<List<BudgetAlertResult>> = _lastBudgetAlertResults.asStateFlow()
+
+    private val _budgetAlertsEnabledState = MutableStateFlow(BudgetNotificationService.isAlertsEnabled(application))
+    val budgetAlertsEnabledState: StateFlow<Boolean> = _budgetAlertsEnabledState.asStateFlow()
+
+    private val _budget80AlertEnabledState = MutableStateFlow(BudgetNotificationService.is80AlertEnabled(application))
+    val budget80AlertEnabledState: StateFlow<Boolean> = _budget80AlertEnabledState.asStateFlow()
+
+    private val _budget100AlertEnabledState = MutableStateFlow(BudgetNotificationService.is100AlertEnabled(application))
+    val budget100AlertEnabledState: StateFlow<Boolean> = _budget100AlertEnabledState.asStateFlow()
+
+    init {
+        BudgetNotificationService.initNotificationChannel(application)
+        viewModelScope.launch {
+            budgetProgressList.collect { progressItems ->
+                if (progressItems.isNotEmpty()) {
+                    val alerts = BudgetNotificationService.evaluateBudgetsAndNotify(getApplication(), progressItems)
+                    if (alerts.isNotEmpty()) {
+                        _lastBudgetAlertResults.value = alerts
+                    }
+                }
+            }
+        }
+    }
+
+    fun evaluateBudgetsNow(): List<BudgetAlertResult> {
+        val results = BudgetNotificationService.evaluateBudgetsAndNotify(getApplication(), budgetProgressList.value)
+        if (results.isNotEmpty()) {
+            _lastBudgetAlertResults.value = results
+        }
+        return results
+    }
+
+    fun isBudgetAlertsEnabled(): Boolean = BudgetNotificationService.isAlertsEnabled(getApplication())
+
+    fun setBudgetAlertsEnabled(enabled: Boolean) {
+        BudgetNotificationService.setAlertsEnabled(getApplication(), enabled)
+        _budgetAlertsEnabledState.value = enabled
+        if (enabled) {
+            evaluateBudgetsNow()
+        }
+    }
+
+    fun isBudget80AlertEnabled(): Boolean = BudgetNotificationService.is80AlertEnabled(getApplication())
+
+    fun setBudget80AlertEnabled(enabled: Boolean) {
+        BudgetNotificationService.set80AlertEnabled(getApplication(), enabled)
+        _budget80AlertEnabledState.value = enabled
+        if (enabled) {
+            evaluateBudgetsNow()
+        }
+    }
+
+    fun isBudget100AlertEnabled(): Boolean = BudgetNotificationService.is100AlertEnabled(getApplication())
+
+    fun setBudget100AlertEnabled(enabled: Boolean) {
+        BudgetNotificationService.set100AlertEnabled(getApplication(), enabled)
+        _budget100AlertEnabledState.value = enabled
+        if (enabled) {
+            evaluateBudgetsNow()
+        }
+    }
+
+    fun hasBudgetNotificationPermission(): Boolean = BudgetNotificationService.hasNotificationPermission(getApplication())
+
+    fun sendTestBudgetNotification(threshold: BudgetAlertThreshold, category: String = "Food & Dining"): Boolean {
+        return BudgetNotificationService.sendTestNotification(getApplication(), threshold, category)
+    }
+
+    fun resetBudgetAlertsHistory() {
+        BudgetNotificationService.resetAllAlertsHistory(getApplication())
+        _lastBudgetAlertResults.value = emptyList()
+        evaluateBudgetsNow()
+    }
 
     // Monthly Spending Habits Summary (Current vs Previous Month & Top Category)
     val monthlySpendingHabits: StateFlow<MonthlySpendingHabitsSummary> = combine(
@@ -1134,6 +1559,88 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             trendPoints = trendPoints
         )
     }
+
+    // Selected Category Filter for Budget vs Trend Analysis (null for All Categories)
+    private val _selectedTrendCategory = MutableStateFlow<String?>(null)
+    val selectedTrendCategory: StateFlow<String?> = _selectedTrendCategory.asStateFlow()
+
+    fun setSelectedTrendCategory(category: String?) {
+        _selectedTrendCategory.value = category
+    }
+
+    // 6-Month Spending Trends vs Set Budget Limits Stream
+    val monthlyBudgetTrend6M: StateFlow<MonthlyBudgetTrendSummary> = combine(
+        repository.allExpenses,
+        repository.allBudgets,
+        _selectedTrendCategory
+    ) { allTxs, budgets, selectedCat ->
+        calculateMonthlyBudgetTrends(allTxs, budgets, 6, selectedCat)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = calculateMonthlyBudgetTrends(emptyList(), emptyList(), 6, null)
+    )
+
+    // 1-Year (12-Month) Spending Trends vs Set Budget Limits Stream
+    val monthlyBudgetTrend1Y: StateFlow<MonthlyBudgetTrendSummary> = combine(
+        repository.allExpenses,
+        repository.allBudgets,
+        _selectedTrendCategory
+    ) { allTxs, budgets, selectedCat ->
+        calculateMonthlyBudgetTrends(allTxs, budgets, 12, selectedCat)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = calculateMonthlyBudgetTrends(emptyList(), emptyList(), 12, null)
+    )
+
+    internal fun calculateMonthlyBudgetTrends(
+        allTxs: List<ExpenseEntity>,
+        budgets: List<BudgetEntity>,
+        monthsCount: Int,
+        categoryFilter: String? = null
+    ): MonthlyBudgetTrendSummary = MonthlyBudgetTrendCalculator.calculateMonthlyBudgetTrends(allTxs, budgets, monthsCount, categoryFilter)
+
+    // Selected Month for Category-Grouped Budget Analysis (null = Current Month)
+    private val _selectedCategoryReportMonth = MutableStateFlow<Pair<Int, Int>?>(null)
+    val selectedCategoryReportMonth: StateFlow<Pair<Int, Int>?> = _selectedCategoryReportMonth.asStateFlow()
+
+    fun setSelectedCategoryReportMonth(year: Int, month: Int) {
+        _selectedCategoryReportMonth.value = Pair(year, month)
+    }
+
+    // Category-Grouped Monthly Spending vs Set Budget Limits Report
+    val categoryBudgetReport: StateFlow<MonthlyCategoryBudgetReport> = combine(
+        repository.allExpenses,
+        repository.allBudgets,
+        _selectedCategoryReportMonth
+    ) { allTxs, budgets, selectedMonthPair ->
+        val now = Calendar.getInstance()
+        val y = selectedMonthPair?.first ?: now.get(Calendar.YEAR)
+        val m = selectedMonthPair?.second ?: (now.get(Calendar.MONTH) + 1)
+        MonthlyBudgetTrendCalculator.calculateCategoryBudgetReport(allTxs, budgets, y, m)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = MonthlyBudgetTrendCalculator.calculateCategoryBudgetReport(
+            emptyList(),
+            emptyList(),
+            Calendar.getInstance().get(Calendar.YEAR),
+            Calendar.getInstance().get(Calendar.MONTH) + 1
+        )
+    )
+
+    // Category-Grouped Multi-Month Trend Stream (6 Months)
+    val categoryMultiMonthTrends: StateFlow<List<CategoryMultiMonthTrendPoint>> = combine(
+        repository.allExpenses,
+        repository.allBudgets
+    ) { allTxs, budgets ->
+        MonthlyBudgetTrendCalculator.calculateCategoryMultiMonthTrends(allTxs, budgets, 6)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = MonthlyBudgetTrendCalculator.calculateCategoryMultiMonthTrends(emptyList(), emptyList(), 6)
+    )
 
     fun getMonthlyExpenseReportDetail(year: Int, month: Int): MonthlyExpenseReportDetail {
         val all = allExpenses.value
@@ -1538,45 +2045,55 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Cloud Backup & Sync Simulation with Client-side Encryption
+    // Cloud Backup & Sync with Firebase Firestore
     fun performCloudBackup() {
         viewModelScope.launch {
-            _isAiLoading.value = true
-            try {
-                val json = repository.exportEncryptedJson()
-                val count = filteredExpenses.value.size
-                repository.addSyncLog(
-                    action = "CLOUD_BACKUP",
-                    count = count,
-                    status = "SUCCESS",
-                    email = securityManager.googleUserEmail.value ?: "Local Vault (Offline)",
-                    details = "Encrypted ledger payload backed up to secure cloud vault"
-                )
-                securityManager.recordSyncSuccess()
-                _syncMessage.value = "Cloud Backup complete! $count records encrypted and synced."
-            } catch (e: Exception) {
-                _syncMessage.value = "Backup error: ${e.message}"
-            } finally {
-                _isAiLoading.value = false
+            if (firestoreSyncRepository.isUserSignedIn()) {
+                syncFirestoreTransactions()
+            } else {
+                _syncMessage.value = "Sign in with Google to synchronize transactions to Firebase Firestore across devices."
             }
         }
     }
 
     fun performCloudRestore() {
         viewModelScope.launch {
+            if (!firestoreSyncRepository.isUserSignedIn()) {
+                _syncMessage.value = "Sign in with Google to restore transactions from Firebase Firestore."
+                return@launch
+            }
             _isAiLoading.value = true
             try {
-                val sampleJson = repository.exportEncryptedJson()
-                val restoredCount = repository.importEncryptedJson(sampleJson)
-                repository.addSyncLog(
-                    action = "CLOUD_RESTORE",
-                    count = restoredCount,
-                    status = "SUCCESS",
-                    email = securityManager.googleUserEmail.value ?: "Local Vault (Offline)",
-                    details = "Fetched latest multi-device transaction ledger"
-                )
-                securityManager.recordSyncSuccess()
-                _syncMessage.value = "Cloud Restore complete! Synced $restoredCount transactions."
+                val fetchResult = firestoreSyncRepository.fetchCloudExpenses()
+                if (fetchResult.isSuccess) {
+                    val cloudList = fetchResult.getOrNull().orEmpty()
+                    val localList = repository.getExpensesList()
+                    val localLookup = localList.associateBy {
+                        "${it.title.trim().lowercase()}_${it.amount}_${it.date}"
+                    }
+                    val newToInsert = mutableListOf<ExpenseEntity>()
+                    for (cloud in cloudList) {
+                        val key = "${cloud.title.trim().lowercase()}_${cloud.amount}_${cloud.date}"
+                        if (!localLookup.containsKey(key)) {
+                            newToInsert.add(cloud.toExpenseEntity())
+                        }
+                    }
+                    if (newToInsert.isNotEmpty()) {
+                        repository.insertExpenses(newToInsert)
+                    }
+                    securityManager.recordSyncSuccess()
+                    val count = cloudList.size
+                    repository.addSyncLog(
+                        action = "CLOUD_RESTORE",
+                        count = newToInsert.size,
+                        status = "SUCCESS",
+                        email = securityManager.googleUserEmail.value ?: "Google Account",
+                        details = "Restored ${newToInsert.size} new transactions from Firebase Firestore (Total cloud: $count)"
+                    )
+                    _syncMessage.value = "Restored ${newToInsert.size} new transactions from Firestore. Total accessible: $count"
+                } else {
+                    _syncMessage.value = "Failed to fetch cloud expenses: ${fetchResult.exceptionOrNull()?.localizedMessage}"
+                }
             } catch (e: Exception) {
                 _syncMessage.value = "Restore error: ${e.message}"
             } finally {
@@ -1658,18 +2175,69 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Export Helpers
-    fun exportPdfReport(): File {
+    fun exportPdfReport(title: String = "Transactions Ledger", expensesList: List<ExpenseEntity>? = null): File {
         return ReportExportManager.generatePdfReport(
-            getApplication(),
-            filteredExpenses.value,
-            allBudgets.value
+            context = getApplication(),
+            expenses = expensesList ?: filteredExpenses.value,
+            budgets = allBudgets.value,
+            monthYearTitle = title,
+            subTitleInfo = "Transaction History • ${SimpleDateFormat("dd MMMM yyyy, hh:mm a", Locale.getDefault()).format(Date())} • Currency: INR (₹)"
         )
     }
 
-    fun exportCsvReport(): File {
+    fun exportCsvReport(prefix: String = "Transactions", expensesList: List<ExpenseEntity>? = null): File {
         return ReportExportManager.generateCsvReport(
-            getApplication(),
-            filteredExpenses.value
+            context = getApplication(),
+            expenses = expensesList ?: filteredExpenses.value,
+            fileNamePrefix = prefix
+        )
+    }
+
+    fun exportMonthlyPdfReport(year: Int, month: Int): File {
+        val detail = getMonthlyExpenseReportDetail(year, month)
+        return ReportExportManager.generateMonthlyPdfReport(
+            context = getApplication(),
+            expenses = detail.expenses,
+            budgets = allBudgets.value,
+            year = year,
+            month = month
+        )
+    }
+
+    fun exportMonthlyCsvReport(year: Int, month: Int): File {
+        val detail = getMonthlyExpenseReportDetail(year, month)
+        return ReportExportManager.generateMonthlyCsvReport(
+            context = getApplication(),
+            expenses = detail.expenses,
+            year = year,
+            month = month
+        )
+    }
+
+    fun exportCustomDatePdfReport(startDateMs: Long, endDateMs: Long): File {
+        val start = minOf(startDateMs, endDateMs)
+        val end = maxOf(startDateMs, endDateMs)
+        val rangeExpenses = allExpenses.value.filter { it.date in start..end }
+        val sdf = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        val title = "Statement (${sdf.format(Date(start))} to ${sdf.format(Date(end))})"
+        return ReportExportManager.generatePdfReport(
+            context = getApplication(),
+            expenses = rangeExpenses,
+            budgets = allBudgets.value,
+            monthYearTitle = title,
+            subTitleInfo = "Custom Period: ${sdf.format(Date(start))} - ${sdf.format(Date(end))} • Currency: INR (₹)"
+        )
+    }
+
+    fun exportCustomDateCsvReport(startDateMs: Long, endDateMs: Long): File {
+        val start = minOf(startDateMs, endDateMs)
+        val end = maxOf(startDateMs, endDateMs)
+        val rangeExpenses = allExpenses.value.filter { it.date in start..end }
+        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+        return ReportExportManager.generateCsvReport(
+            context = getApplication(),
+            expenses = rangeExpenses,
+            fileNamePrefix = "Period_Expenses_${sdf.format(Date(start))}_to_${sdf.format(Date(end))}"
         )
     }
 
@@ -1707,6 +2275,70 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             startDateMs = startDateMs,
             endDateMs = endDateMs
         )
+    }
+
+    /**
+     * Exports the Gemini AI Monthly Spending Habits Report into a beautifully formatted PDF document.
+     */
+    fun exportAiReportPdf(report: MonthlyAiSpendingReport): File {
+        val monthNum = getMonthNumber(report.monthName)
+        val monthExpenses = allExpenses.value.filter { exp ->
+            val cal = Calendar.getInstance().apply { timeInMillis = exp.date }
+            cal.get(Calendar.YEAR) == report.year && (cal.get(Calendar.MONTH) + 1) == monthNum
+        }
+        return ReportExportManager.generateAiMonthlySpendingReportPdf(
+            context = getApplication(),
+            report = report,
+            expenses = monthExpenses,
+            budgets = allBudgets.value
+        )
+    }
+
+    /**
+     * Retrieves the active AI spending report or creates an offline synthesized report on demand.
+     */
+    fun getOrGenerateCurrentAiReport(year: Int? = null, month: Int? = null): MonthlyAiSpendingReport {
+        val currentState = monthlyAiReportState.value
+        if (currentState is MonthlyAiReportUiState.Success) {
+            return currentState.report
+        }
+        val cal = Calendar.getInstance()
+        val targetYear = year ?: cal.get(Calendar.YEAR)
+        val targetMonth = month ?: (cal.get(Calendar.MONTH) + 1)
+        val monthExpenses = getMonthlyExpenseReportDetail(targetYear, targetMonth).expenses
+        val activeRecurring = allRecurringExpenses.value.filter { it.isActive }
+        val categoryGroups = monthExpenses.groupBy { it.category }
+            .map { Pair(it.key, it.value.sumOf { e -> e.amount }) }
+            .sortedByDescending { it.second }
+        val totalSpent = monthExpenses.sumOf { it.amount }
+        val txCount = monthExpenses.size
+        val dailyAvg = if (monthExpenses.isNotEmpty()) totalSpent / 30.0 else 0.0
+        val recurringMonthlyEstimated = activeRecurring.sumOf { it.amount }
+
+        return geminiService.generateOfflineMonthlyHabitsReport(
+            monthName = SimpleDateFormat("MMMM", Locale.getDefault()).format(cal.time),
+            year = targetYear,
+            totalSpent = totalSpent,
+            txCount = txCount,
+            dailyAvg = dailyAvg,
+            prevComparisonText = "Baseline month evaluation",
+            categoryGroup = categoryGroups,
+            budgets = allBudgets.value,
+            activeRecurring = activeRecurring,
+            recurringMonthlyEstimated = recurringMonthlyEstimated,
+            monthExpenses = monthExpenses,
+            pctChange = 0.0
+        )
+    }
+
+    private fun getMonthNumber(monthName: String): Int {
+        val monthNames = listOf(
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"
+        )
+        val clean = monthName.trim().lowercase(Locale.getDefault())
+        val index = monthNames.indexOfFirst { clean.startsWith(it.take(3)) }
+        return if (index != -1) index + 1 else Calendar.getInstance().get(Calendar.MONTH) + 1
     }
 
     fun getAvailableMonths(): List<AvailableMonth> {
@@ -1754,6 +2386,14 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             }
             .sortedWith(compareByDescending<AvailableMonth> { it.year }.thenByDescending { it.month })
     }
+
+    val availableMonths: StateFlow<List<AvailableMonth>> = repository.allExpenses.map {
+        getAvailableMonths()
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     fun getCustomDateRangeStats(startDateMs: Long, endDateMs: Long): Pair<Int, Double> {
         val calStart = Calendar.getInstance().apply {

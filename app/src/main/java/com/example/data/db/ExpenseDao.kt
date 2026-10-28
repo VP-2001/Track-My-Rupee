@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Update
 import com.example.data.model.BudgetEntity
 import com.example.data.model.ExpenseEntity
+import com.example.data.model.RecurringExpenseEntity
 import com.example.data.model.SyncLogEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -82,3 +83,40 @@ interface SyncLogDao {
     @Query("DELETE FROM sync_logs")
     suspend fun clearLogs()
 }
+
+@Dao
+interface RecurringExpenseDao {
+    @Query("SELECT * FROM recurring_expenses ORDER BY nextDueDate ASC, id DESC")
+    fun getAllRecurringExpensesFlow(): Flow<List<RecurringExpenseEntity>>
+
+    @Query("SELECT * FROM recurring_expenses ORDER BY nextDueDate ASC, id DESC")
+    suspend fun getAllRecurringExpensesList(): List<RecurringExpenseEntity>
+
+    @Query("SELECT * FROM recurring_expenses WHERE isActive = 1 ORDER BY nextDueDate ASC")
+    fun getActiveRecurringExpensesFlow(): Flow<List<RecurringExpenseEntity>>
+
+    @Query("SELECT * FROM recurring_expenses WHERE isActive = 1 AND nextDueDate <= :currentTime")
+    suspend fun getDueRecurringExpenses(currentTime: Long): List<RecurringExpenseEntity>
+
+    @Query("SELECT * FROM recurring_expenses WHERE id = :id")
+    suspend fun getRecurringExpenseById(id: Long): RecurringExpenseEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurringExpense(item: RecurringExpenseEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurringExpenses(items: List<RecurringExpenseEntity>): List<Long>
+
+    @Update
+    suspend fun updateRecurringExpense(item: RecurringExpenseEntity)
+
+    @Delete
+    suspend fun deleteRecurringExpense(item: RecurringExpenseEntity)
+
+    @Query("DELETE FROM recurring_expenses WHERE id = :id")
+    suspend fun deleteRecurringExpenseById(id: Long)
+
+    @Query("DELETE FROM recurring_expenses")
+    suspend fun deleteAllRecurringExpenses()
+}
+

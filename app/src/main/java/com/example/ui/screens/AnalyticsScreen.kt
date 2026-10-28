@@ -65,6 +65,7 @@ import com.example.ui.components.InteractivePieDonutChart
 import com.example.ui.components.InteractiveRadarChart
 import com.example.ui.components.MonthlyComparisonView
 import com.example.ui.components.MonthlySpendingHabitsBottomSheet
+import com.example.ui.components.RechartsCategoryBudgetDashboard
 import com.example.ui.viewmodel.DateFilterType
 import com.example.ui.viewmodel.ExpenseViewModel
 
@@ -90,6 +91,9 @@ fun AnalyticsScreen(
     val monthlySpendingHabits by viewModel.monthlySpendingHabits.collectAsStateWithLifecycle()
     val monthlyComparisonReport by viewModel.monthlyComparisonReport.collectAsStateWithLifecycle()
     val selectedComparisonView by viewModel.selectedComparisonView.collectAsStateWithLifecycle()
+    val categoryBudgetReport by viewModel.categoryBudgetReport.collectAsStateWithLifecycle()
+    val categoryMultiMonthTrends by viewModel.categoryMultiMonthTrends.collectAsStateWithLifecycle()
+    val availableMonths = remember(filteredExpenses) { viewModel.getAvailableMonths() }
 
     var activeAnalyticsTab by remember { mutableIntStateOf(0) }
     var selectedChartView by remember { mutableStateOf(ChartViewType.DONUT) }
@@ -187,7 +191,11 @@ fun AnalyticsScreen(
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf("Overview & Charts", "Monthly Comparison").forEachIndexed { index, title ->
+                    listOf(
+                        Triple("Overview", Icons.Default.PieChart, "tab_overview_charts"),
+                        Triple("Category Budgets", Icons.Default.BarChart, "tab_category_budgets"),
+                        Triple("Comparison", Icons.Default.CalendarMonth, "tab_monthly_comparison")
+                    ).forEachIndexed { index, (title, icon, testTag) ->
                         val isSelected = activeAnalyticsTab == index
                         Box(
                             modifier = Modifier
@@ -196,24 +204,25 @@ fun AnalyticsScreen(
                                 .background(if (isSelected) com.example.ui.theme.SophisticatedPrimary else Color.Transparent)
                                 .clickable { activeAnalyticsTab = index }
                                 .padding(vertical = 10.dp)
-                                .testTag(if (index == 0) "tab_overview_charts" else "tab_monthly_comparison"),
+                                .testTag(testTag),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (index == 0) Icons.Default.PieChart else Icons.Default.CalendarMonth,
+                                    imageVector = icon,
                                     contentDescription = null,
                                     tint = if (isSelected) Color(0xFF1E1035) else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
                                 Text(
                                     text = title,
-                                    style = MaterialTheme.typography.labelMedium,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) Color(0xFF1E1035) else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                    color = if (isSelected) Color(0xFF1E1035) else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -224,6 +233,19 @@ fun AnalyticsScreen(
         }
 
         if (activeAnalyticsTab == 1) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    RechartsCategoryBudgetDashboard(
+                        report = categoryBudgetReport,
+                        multiMonthTrends = categoryMultiMonthTrends,
+                        availableMonths = availableMonths,
+                        onSelectMonth = { y, m -> viewModel.setSelectedCategoryReportMonth(y, m) },
+                        onNavigateToBudgets = null,
+                        onFilterTransactionsByCategory = { cat -> viewModel.filterByCategory(cat) }
+                    )
+                }
+            }
+        } else if (activeAnalyticsTab == 2) {
             item {
                 MonthlyComparisonView(
                     report = monthlyComparisonReport,
@@ -478,7 +500,8 @@ fun AnalyticsScreen(
     if (showHabitsSheet) {
         MonthlySpendingHabitsBottomSheet(
             summary = monthlySpendingHabits,
-            onDismiss = { showHabitsSheet = false }
+            onDismiss = { showHabitsSheet = false },
+            viewModel = viewModel
         )
     }
 }

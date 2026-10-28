@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventRepeat
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
@@ -76,13 +77,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.filled.Share
 import com.example.data.model.ExpenseEntity
 import com.example.export.ReportExportManager
+import com.example.ui.components.CategoryBudgetGaugeCard
 import com.example.ui.components.InteractiveAreaLineChart
 import com.example.ui.components.InteractivePieDonutChart
 import com.example.ui.components.LocalBackupRestoreCard
 import com.example.ui.components.MonthlyExpenseReportDialog
 import com.example.ui.components.MonthlySpendingHabitsBottomSheet
+import com.example.ui.components.RechartsBudgetTrendDashboard
+import com.example.ui.components.RechartsCategoryBudgetDashboard
+import com.example.ui.components.RechartsDailyTrendAndCategoryDashboard
 import com.example.ui.components.RechartsMonthlyTrendLineChart
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.SophisticatedDarkBackground
@@ -121,7 +127,8 @@ fun DashboardScreen(
     onNavigateToAiTools: (String) -> Unit, // "scan", "statement", "voice"
     onNavigateToReports: () -> Unit,
     onAddExpenseClick: () -> Unit,
-    onEditExpenseClick: (ExpenseEntity) -> Unit
+    onEditExpenseClick: (ExpenseEntity) -> Unit,
+    onOpenAccountSheet: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val monthExpenses by viewModel.monthExpenses.collectAsStateWithLifecycle()
@@ -132,7 +139,16 @@ fun DashboardScreen(
     val monthlySpendingHabits by viewModel.monthlySpendingHabits.collectAsStateWithLifecycle()
     val sixMonthGrowthSummary by viewModel.sixMonthGrowthSummary.collectAsStateWithLifecycle()
     val oneYearGrowthSummary by viewModel.oneYearGrowthSummary.collectAsStateWithLifecycle()
+    val monthlyBudgetTrend6M by viewModel.monthlyBudgetTrend6M.collectAsStateWithLifecycle()
+    val monthlyBudgetTrend1Y by viewModel.monthlyBudgetTrend1Y.collectAsStateWithLifecycle()
+    val selectedTrendCategory by viewModel.selectedTrendCategory.collectAsStateWithLifecycle()
+    val categoryBudgetReport by viewModel.categoryBudgetReport.collectAsStateWithLifecycle()
+    val categoryMultiMonthTrends by viewModel.categoryMultiMonthTrends.collectAsStateWithLifecycle()
+    val upcomingRecurringBills by viewModel.upcomingRecurringBills.collectAsStateWithLifecycle()
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
 
+    val availableMonths = remember(monthExpenses, allExpenses) { viewModel.getAvailableMonths() }
+    var selectedBudgetViewMode by remember { mutableStateOf("CATEGORY") } // "CATEGORY" or "OVERALL"
     var showHabitsBottomSheet by remember { mutableStateOf(false) }
     var isDonutChartMode by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<ExpenseEntity?>(null) }
@@ -150,21 +166,7 @@ fun DashboardScreen(
 
     val overBudgetCount = budgetProgress.count { it.isOverBudget }
 
-    val googleEmail by viewModel.securityManager.googleUserEmail.collectAsStateWithLifecycle()
-    val displayName = remember(googleEmail) {
-        val em = googleEmail
-        if (!em.isNullOrBlank()) {
-            val prefix = em.substringBefore("@")
-            prefix.split(".", "_", "-").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
-        } else {
-            "Personal Ledger"
-        }
-    }
-    val initials = remember(displayName) {
-        val parts = displayName.split(" ").filter { it.isNotEmpty() }
-        if (parts.size >= 2) "${parts[0].first().uppercase()}${parts[1].first().uppercase()}"
-        else displayName.take(2).uppercase()
-    }
+    val userDisplayName = currentUser?.displayName ?: "Personal Ledger"
 
     LazyColumn(
         modifier = Modifier
@@ -184,30 +186,21 @@ fun DashboardScreen(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.clickable { onOpenAccountSheet() }
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(SophisticatedPrimary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = initials,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SophisticatedOnPrimary
-                        )
-                    }
+                    com.example.ui.components.ProfileAvatarButton(
+                        viewModel = viewModel,
+                        onClick = onOpenAccountSheet
+                    )
                     Column {
                         Text(
-                            text = "Welcome back,",
+                            text = if (currentUser != null) "Welcome back," else "Guest Session,",
                             style = MaterialTheme.typography.labelSmall,
                             color = SophisticatedDarkOnSurfaceVariant
                         )
                         Text(
-                            text = displayName,
+                            text = userDisplayName,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = SophisticatedDarkOnSurface
@@ -543,123 +536,264 @@ fun DashboardScreen(
             }
         }
 
-        // 4. Analytics Breakdown Card
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = SophisticatedDarkSurface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, SophisticatedDarkBorder)
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+        // Upcoming Recurring Bills Glance & Automation Card
+        if (upcomingRecurringBills.isNotEmpty()) {
+            val dueBills = upcomingRecurringBills.filter { it.isDueNow }
+            val nextBill = upcomingRecurringBills.first()
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clickable { onNavigateToBudgets() }
+                        .testTag("dashboard_recurring_bills_card"),
+                    colors = CardDefaults.cardColors(containerColor = SophisticatedDarkSurface),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (dueBills.isNotEmpty()) DangerRed.copy(alpha = 0.5f) else SophisticatedDarkBorder
+                    )
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (dueBills.isNotEmpty()) DangerRed.copy(alpha = 0.15f) else SophisticatedPrimary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.EventRepeat,
+                                contentDescription = "Recurring Bills",
+                                tint = if (dueBills.isNotEmpty()) DangerRed else SophisticatedPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Spending by Category",
-                                style = MaterialTheme.typography.titleMedium,
+                                text = if (dueBills.isNotEmpty()) {
+                                    "${dueBills.size} Recurring Bill${if (dueBills.size > 1) "s" else ""} Due!"
+                                } else {
+                                    "Next Bill: ${nextBill.title}"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = SophisticatedDarkOnSurface
+                                color = if (dueBills.isNotEmpty()) DangerRed else SophisticatedDarkOnSurface
                             )
                             Text(
-                                text = "Interactive category breakdown",
+                                text = if (dueBills.isNotEmpty()) {
+                                    "${dueBills.joinToString(", ") { it.title }} (${ExpenseEntity.formatInr(dueBills.sumOf { it.amount })})"
+                                } else {
+                                    "${ExpenseEntity.formatInr(nextBill.amount)} • ${if (nextBill.daysUntilDue == 0L) "Due Today" else "Due in ${nextBill.daysUntilDue} days"}"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SophisticatedDarkOnSurfaceVariant
                             )
                         }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = SophisticatedDarkSurfaceVariant,
-                                border = BorderStroke(1.dp, SophisticatedDarkBorder)
+                        if (dueBills.isNotEmpty()) {
+                            Button(
+                                onClick = { viewModel.processDueRecurringExpenses() },
+                                colors = ButtonDefaults.buttonColors(containerColor = DangerRed, contentColor = Color.White),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("dashboard_pay_due_bills_btn")
                             ) {
-                                Row(modifier = Modifier.padding(2.dp)) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (!isDonutChartMode) SophisticatedPrimary else Color.Transparent)
-                                            .clickable { isDonutChartMode = false }
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            .testTag("pie_mode_button")
-                                    ) {
-                                        Text(
-                                            text = "Pie",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (!isDonutChartMode) Color.Black else SophisticatedDarkOnSurfaceVariant
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (isDonutChartMode) SophisticatedPrimary else Color.Transparent)
-                                            .clickable { isDonutChartMode = true }
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            .testTag("donut_mode_button")
-                                    ) {
-                                        Text(
-                                            text = "Donut",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isDonutChartMode) Color.Black else SophisticatedDarkOnSurfaceVariant
-                                        )
-                                    }
-                                }
+                                Text("Add Now", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
-
-                            IconButton(onClick = onNavigateToAnalytics) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Full Analytics",
-                                    tint = SophisticatedPrimary
-                                )
-                            }
+                        } else {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "View Bills",
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    InteractivePieDonutChart(
-                        data = categorySummaries,
-                        isDonut = isDonutChartMode,
-                        modifier = Modifier.testTag("dashboard_category_pie_chart")
-                    )
+                }
+            }
+        } else {
+            // Empty state promo to define recurring transactions in Room DB
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clickable { onNavigateToBudgets() }
+                        .testTag("dashboard_recurring_empty_card"),
+                    colors = CardDefaults.cardColors(containerColor = SophisticatedDarkSurfaceDim),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, SophisticatedDarkBorder)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SophisticatedPrimary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.EventRepeat,
+                                contentDescription = "Recurring Transactions",
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Automate Recurring Transactions",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedDarkOnSurface
+                            )
+                            Text(
+                                text = "Define monthly rent, subscriptions & EMI to auto-record on schedule",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = SophisticatedPrimaryContainer
+                        ) {
+                            Text(
+                                text = "+ Set Up",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedOnPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // 4b. Recharts 6-Month Spending Trend & Financial Growth Line Chart
+        // 3b. Category Budget Progress Gauges (Consumed % vs. Remaining Headroom)
         item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = SophisticatedDarkSurfaceVariant),
-                border = BorderStroke(1.dp, SophisticatedDarkBorder),
+            CategoryBudgetGaugeCard(
+                budgetProgress = budgetProgress,
+                onNavigateToBudgets = onNavigateToBudgets,
+                onCategoryClick = { cat ->
+                    viewModel.filterByCategory(cat)
+                    onNavigateToTransactions()
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
+
+        // 4. Recharts Interactive Daily Spending & Category Breakdown Dashboard
+        item {
+            RechartsDailyTrendAndCategoryDashboard(
+                monthExpenses = monthExpenses,
+                categorySummaries = categorySummaries,
+                onNavigateToAnalytics = onNavigateToAnalytics,
+                onNavigateToTransactions = onNavigateToTransactions,
+                onCategoryClick = { cat ->
+                    viewModel.filterByCategory(cat)
+                    onNavigateToTransactions()
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
+
+        // 4b. Recharts Monthly Spending Trends vs Budget Dashboard (Category Grouped & Overall)
+        item {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .testTag("dashboard_monthly_trend_card")
             ) {
-                RechartsMonthlyTrendLineChart(
-                    oneYearSummary = oneYearGrowthSummary,
-                    summary = sixMonthGrowthSummary,
-                    onViewMonthlyReport = { year, month ->
-                        selectedReportMonth = Pair(year, month)
-                    },
-                    onViewAllReports = {
-                        val now = Calendar.getInstance()
-                        selectedReportMonth = Pair(now.get(Calendar.YEAR), now.get(Calendar.MONTH) + 1)
-                    },
-                    modifier = Modifier.testTag("dashboard_monthly_trend_chart")
-                )
+                // View Selector Header: By Category vs Overall Trends
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Budget Visualization",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = SophisticatedDarkOnSurface
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = SophisticatedDarkSurfaceVariant,
+                        border = BorderStroke(1.dp, SophisticatedDarkBorder)
+                    ) {
+                        Row(modifier = Modifier.padding(2.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selectedBudgetViewMode == "CATEGORY") SophisticatedPrimary else Color.Transparent)
+                                    .clickable { selectedBudgetViewMode = "CATEGORY" }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    .testTag("budget_view_mode_category")
+                            ) {
+                                Text(
+                                    text = "By Category",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selectedBudgetViewMode == "CATEGORY") Color.Black else SophisticatedDarkOnSurfaceVariant
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selectedBudgetViewMode == "OVERALL") SophisticatedPrimary else Color.Transparent)
+                                    .clickable { selectedBudgetViewMode = "OVERALL" }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    .testTag("budget_view_mode_overall")
+                            ) {
+                                Text(
+                                    text = "Overall Trend",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selectedBudgetViewMode == "OVERALL") Color.Black else SophisticatedDarkOnSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (selectedBudgetViewMode == "CATEGORY") {
+                    RechartsCategoryBudgetDashboard(
+                        report = categoryBudgetReport,
+                        multiMonthTrends = categoryMultiMonthTrends,
+                        availableMonths = availableMonths,
+                        onSelectMonth = { y, m -> viewModel.setSelectedCategoryReportMonth(y, m) },
+                        onNavigateToBudgets = onNavigateToBudgets,
+                        onFilterTransactionsByCategory = { cat ->
+                            viewModel.filterByCategory(cat)
+                            onNavigateToTransactions()
+                        },
+                        modifier = Modifier.testTag("dashboard_recharts_category_budget_dashboard")
+                    )
+                } else {
+                    RechartsBudgetTrendDashboard(
+                        summary6M = monthlyBudgetTrend6M,
+                        summary1Y = monthlyBudgetTrend1Y,
+                        selectedCategory = selectedTrendCategory,
+                        onCategorySelected = { cat -> viewModel.setSelectedTrendCategory(cat) },
+                        onViewMonthlyReport = { year, month ->
+                            selectedReportMonth = Pair(year, month)
+                        },
+                        onNavigateToBudgets = onNavigateToBudgets,
+                        modifier = Modifier.testTag("dashboard_recharts_budget_trend_dashboard")
+                    )
+                }
             }
         }
 
@@ -840,6 +974,129 @@ fun DashboardScreen(
             )
         }
 
+        // 7b. Room DB CSV Ledger Backup Card
+        item {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = SophisticatedDarkSurfaceDim,
+                border = BorderStroke(1.dp, SophisticatedPrimary.copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .testTag("dashboard_csv_export_card")
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(SophisticatedPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.TableChart,
+                            contentDescription = "CSV Export",
+                            tint = SophisticatedPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Export Room DB to CSV",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedDarkOnSurface
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = SophisticatedPrimaryContainer
+                            ) {
+                                Text(
+                                    text = "External Backup",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SophisticatedOnPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "${allExpenses.size} records ready for external spreadsheet backup",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SophisticatedDarkOnSurfaceVariant
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val csv = viewModel.exportCsvReport("Room_Ledger_Backup", allExpenses)
+                                val (success, msg) = ReportExportManager.saveToDownloads(
+                                    context,
+                                    csv,
+                                    "text/csv"
+                                )
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (success) "Exported ${allExpenses.size} records to Downloads: ${csv.name}" else msg,
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SophisticatedPrimary,
+                                contentColor = Color.Black
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("dashboard_export_csv_btn")
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Download CSV", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "CSV",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val csv = viewModel.exportCsvReport("Room_Ledger_Backup", allExpenses)
+                                ReportExportManager.shareFile(
+                                    context,
+                                    csv,
+                                    "text/csv",
+                                    "Room DB Expense Ledger (CSV Backup)"
+                                )
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("dashboard_share_csv_btn")
+                        ) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = "Share CSV",
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 8. Master Dashboard Excel Export Card
         item {
             Surface(
@@ -927,7 +1184,8 @@ fun DashboardScreen(
             summary = monthlySpendingHabits,
             onDismiss = { showHabitsBottomSheet = false },
             onNavigateToAnalytics = onNavigateToAnalytics,
-            onNavigateToTransactions = onNavigateToTransactions
+            onNavigateToTransactions = onNavigateToTransactions,
+            viewModel = viewModel
         )
     }
 

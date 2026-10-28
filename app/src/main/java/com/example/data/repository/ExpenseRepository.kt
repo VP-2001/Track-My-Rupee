@@ -2,12 +2,15 @@ package com.example.data.repository
 
 import com.example.data.db.BudgetDao
 import com.example.data.db.ExpenseDao
+import com.example.data.db.RecurringExpenseDao
 import com.example.data.db.SyncLogDao
 import com.example.data.model.BudgetEntity
 import com.example.data.model.CategorySummary
 import com.example.data.model.DailySpending
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.PaymentMethodSummary
+import com.example.data.model.RecurringDateUtils
+import com.example.data.model.RecurringExpenseEntity
 import com.example.data.model.SyncLogEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -23,11 +26,14 @@ import java.util.Locale
 class ExpenseRepository(
     private val expenseDao: ExpenseDao,
     private val budgetDao: BudgetDao,
-    private val syncLogDao: SyncLogDao
+    private val syncLogDao: SyncLogDao,
+    private val recurringExpenseDao: RecurringExpenseDao
 ) {
     val allExpenses: Flow<List<ExpenseEntity>> = expenseDao.getAllExpensesFlow()
     val allBudgets: Flow<List<BudgetEntity>> = budgetDao.getAllBudgetsFlow()
     val syncLogs: Flow<List<SyncLogEntity>> = syncLogDao.getRecentSyncLogsFlow()
+    val allRecurringExpenses: Flow<List<RecurringExpenseEntity>> = recurringExpenseDao.getAllRecurringExpensesFlow()
+    val activeRecurringExpenses: Flow<List<RecurringExpenseEntity>> = recurringExpenseDao.getActiveRecurringExpensesFlow()
 
     suspend fun insertExpense(expense: ExpenseEntity): Long = withContext(Dispatchers.IO) {
         expenseDao.insertExpense(expense)
@@ -60,6 +66,123 @@ class ExpenseRepository(
     suspend fun deleteBudget(category: String) = withContext(Dispatchers.IO) {
         budgetDao.deleteBudget(category)
     }
+
+    suspend fun insertRecurringExpense(item: RecurringExpenseEntity): Long = withContext(Dispatchers.IO) {
+        recurringExpenseDao.insertRecurringExpense(item)
+    }
+
+    suspend fun updateRecurringExpense(item: RecurringExpenseEntity) = withContext(Dispatchers.IO) {
+        recurringExpenseDao.updateRecurringExpense(item)
+    }
+
+    suspend fun deleteRecurringExpense(item: RecurringExpenseEntity) = withContext(Dispatchers.IO) {
+        recurringExpenseDao.deleteRecurringExpense(item)
+    }
+
+    suspend fun deleteRecurringExpenseById(id: Long) = withContext(Dispatchers.IO) {
+        recurringExpenseDao.deleteRecurringExpenseById(id)
+    }
+
+    suspend fun toggleRecurringExpenseActive(id: Long, isActive: Boolean) = withContext(Dispatchers.IO) {
+        val existing = recurringExpenseDao.getRecurringExpenseById(id) ?: return@withContext
+        recurringExpenseDao.updateRecurringExpense(existing.copy(isActive = isActive))
+    }
+
+    suspend fun executeRecurringExpenseNow(id: Long, executionTime: Long = System.currentTimeMillis()): ExpenseEntity? = withContext(Dispatchers.IO) {
+        val item = recurringExpenseDao.getRecurringExpenseById(id) ?: return@withContext null
+        val newExpense = ExpenseEntity(
+            title = item.title,
+            amount = item.amount,
+            date = executionTime,
+            category = item.category,
+            paymentMethod = item.paymentMethod,
+            notes = if (item.notes.isNotBlank()) "Recurring: ${item.notes}" else "Recurring Fixed Bill",
+            tag = item.tag,
+            bankName = item.bankName,
+            creditCardName = item.creditCardName
+        )
+        val newId = expenseDao.insertExpense(newExpense)
+        val nextDue = RecurringDateUtils.calculateNextDueDate(
+            item.frequency,
+            item.nextDueDate,
+            item.dayOfMonth,
+            item.dayOfWeek
+        )
+        val hasEnded = item.endDate != null && nextDue > item.endDate
+        recurringExpenseDao.updateRecurringExpense(
+            item.copy(
+                lastExecutedDate = executionTime,
+                nextDueDate = nextDue,
+                isActive = !hasEnded
+            )
+        )
+        addSyncLog(
+            action = "MANUAL_RECURRING_PAY",
+            count = 1,
+            status = "SUCCESS",
+            email = "Room DB Scheduler",
+            details = "Recorded recurring bill: ${item.title} (₹${item.amount})"
+        )
+        newExpense.copy(id = newId)
+    }
+
+    suspend fun processDueRecurringExpenses(currentTime: Long = System.currentTimeMillis()): List<ExpenseEntity> = withContext(Dispatchers.IO) {
+        val dueItems = recurringExpenseDao.getDueRecurringExpenses(currentTime)
+        val createdExpenses = mutableListOf<ExpenseEntity>()
+
+        for (item in dueItems) {
+            if (!item.isActive) continue
+
+            var nextDue = item.nextDueDate
+            var iterations = 0
+            while (nextDue <= currentTime && iterations < 12) {
+                if (item.autoCreateExpense) {
+                    val newExpense = ExpenseEntity(
+                        title = item.title,
+                        amount = item.amount,
+                        date = nextDue,
+                        category = item.category,
+                        paymentMethod = item.paymentMethod,
+                        notes = if (item.notes.isNotBlank()) "Scheduled: ${item.notes}" else "Scheduled Recurring Bill",
+                        tag = item.tag,
+                        bankName = item.bankName,
+                        creditCardName = item.creditCardName
+                    )
+                    val newId = expenseDao.insertExpense(newExpense)
+                    createdExpenses.add(newExpense.copy(id = newId))
+                }
+
+                nextDue = RecurringDateUtils.calculateNextDueDate(
+                    item.frequency,
+                    nextDue,
+                    item.dayOfMonth,
+                    item.dayOfWeek
+                )
+                iterations++
+            }
+
+            val hasEnded = item.endDate != null && nextDue > item.endDate
+            val updated = item.copy(
+                lastExecutedDate = currentTime,
+                nextDueDate = nextDue,
+                isActive = !hasEnded
+            )
+            recurringExpenseDao.updateRecurringExpense(updated)
+        }
+
+        if (createdExpenses.isNotEmpty()) {
+            addSyncLog(
+                action = "AUTO_RECURRING",
+                count = createdExpenses.size,
+                status = "SUCCESS",
+                email = "Room DB Scheduler",
+                details = "Auto-created ${createdExpenses.size} recurring bill entries (${createdExpenses.map { it.title }.take(3).joinToString()})"
+            )
+        }
+
+        createdExpenses
+    }
+
 
     suspend fun addSyncLog(action: String, count: Int, status: String, email: String, details: String) = withContext(Dispatchers.IO) {
         syncLogDao.insertLog(
@@ -205,6 +328,32 @@ class ExpenseRepository(
         }
         root.put("budgets", budgetsArray)
 
+        val recurringList = recurringExpenseDao.getAllRecurringExpensesList()
+        val recurringArray = JSONArray()
+        for (r in recurringList) {
+            val obj = JSONObject().apply {
+                put("title", r.title)
+                put("amount", r.amount)
+                put("category", r.category)
+                put("paymentMethod", r.paymentMethod)
+                put("frequency", r.frequency)
+                put("dayOfMonth", r.dayOfMonth)
+                put("dayOfWeek", r.dayOfWeek)
+                put("startDate", r.startDate)
+                if (r.endDate != null) put("endDate", r.endDate)
+                if (r.lastExecutedDate != null) put("lastExecutedDate", r.lastExecutedDate)
+                put("nextDueDate", r.nextDueDate)
+                put("isActive", r.isActive)
+                put("bankName", r.bankName)
+                put("creditCardName", r.creditCardName)
+                put("notes", r.notes)
+                put("tag", r.tag)
+                put("autoCreateExpense", r.autoCreateExpense)
+            }
+            recurringArray.put(obj)
+        }
+        root.put("recurring_expenses", recurringArray)
+
         root.toString(2)
     }
 
@@ -251,6 +400,38 @@ class ExpenseRepository(
             }
             if (importedBudgets.isNotEmpty()) {
                 budgetDao.insertOrUpdateBudgets(importedBudgets)
+            }
+        }
+
+        val recurringArray = root.optJSONArray("recurring_expenses")
+        if (recurringArray != null) {
+            val importedRecurring = mutableListOf<RecurringExpenseEntity>()
+            for (i in 0 until recurringArray.length()) {
+                val obj = recurringArray.getJSONObject(i)
+                importedRecurring.add(
+                    RecurringExpenseEntity(
+                        title = obj.getString("title"),
+                        amount = obj.getDouble("amount"),
+                        category = obj.optString("category", "Bills & Utilities"),
+                        paymentMethod = obj.optString("paymentMethod", "UPI"),
+                        frequency = obj.optString("frequency", "MONTHLY"),
+                        dayOfMonth = obj.optInt("dayOfMonth", 1),
+                        dayOfWeek = obj.optInt("dayOfWeek", 2),
+                        startDate = obj.optLong("startDate", System.currentTimeMillis()),
+                        endDate = if (obj.has("endDate")) obj.getLong("endDate") else null,
+                        lastExecutedDate = if (obj.has("lastExecutedDate")) obj.getLong("lastExecutedDate") else null,
+                        nextDueDate = obj.optLong("nextDueDate", System.currentTimeMillis()),
+                        isActive = obj.optBoolean("isActive", true),
+                        bankName = obj.optString("bankName", ""),
+                        creditCardName = obj.optString("creditCardName", ""),
+                        notes = obj.optString("notes", ""),
+                        tag = obj.optString("tag", "Subscription"),
+                        autoCreateExpense = obj.optBoolean("autoCreateExpense", true)
+                    )
+                )
+            }
+            if (importedRecurring.isNotEmpty()) {
+                recurringExpenseDao.insertRecurringExpenses(importedRecurring)
             }
         }
 
