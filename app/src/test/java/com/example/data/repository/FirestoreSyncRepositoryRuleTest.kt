@@ -44,7 +44,9 @@ class FirestoreSyncRepositoryRuleTest : FirestoreEmulatorTestBase() {
     @After
     override fun tearDownFirebase() {
         super.tearDownFirebase()
-        roomDatabase.close()
+        if (::roomDatabase.isInitialized) {
+            roomDatabase.close()
+        }
     }
 
     @Test

@@ -37,7 +37,7 @@ abstract class FirestoreEmulatorTestBase {
         databaseId = if (resId != 0) context.getString(resId) else "demo-database"
 
         val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
+            FirebaseApp.initializeApp(
                 context,
                 FirebaseOptions.Builder()
                     .setApplicationId("com.example.app")
@@ -45,26 +45,44 @@ abstract class FirestoreEmulatorTestBase {
                     .setApiKey("fake-api-key-for-emulator")
                     .build()
             )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
-
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
         } else {
             FirebaseApp.getInstance()
         }
 
         firestore = FirebaseFirestore.getInstance(app, databaseId)
         auth = FirebaseAuth.getInstance(app)
+
+        val emulatorAvailable = try {
+            val socket = java.net.Socket()
+            socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, AUTH_PORT), 250)
+            socket.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+
+        org.junit.Assume.assumeTrue(
+            "Firebase local emulator is not running on $EMULATOR_HOST:$AUTH_PORT; skipping emulator rule tests.",
+            emulatorAvailable
+        )
+
+        try {
+            firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+            firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
+                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+                .build()
+        } catch (_: Exception) {}
+
+        try {
+            auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
+        } catch (_: Exception) {}
     }
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        if (::auth.isInitialized) {
+            auth.signOut()
+        }
     }
 
     protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {

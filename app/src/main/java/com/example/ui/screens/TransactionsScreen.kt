@@ -44,6 +44,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -126,7 +129,9 @@ fun TransactionsScreen(
     var showMonthlyReportDialog by remember { mutableStateOf(false) }
     var showExportDateReportDialog by remember { mutableStateOf(false) }
     var exportDateReportInitialTab by remember { mutableIntStateOf(0) }
+    val customRange by viewModel.customDateRange.collectAsStateWithLifecycle()
     var showDatePicker by remember { mutableStateOf(false) }
+    var showDateRangeFilterDialog by remember { mutableStateOf(false) }
 
     val topMerchants = remember(allExpenses) {
         allExpenses.map { it.title.trim() }
@@ -159,6 +164,144 @@ fun TransactionsScreen(
             setOnDismissListener { showDatePicker = false }
             show()
         }
+    }
+
+    if (showDateRangeFilterDialog) {
+        var tempStartMillis by remember {
+            mutableStateOf(customRange?.first ?: (System.currentTimeMillis() - 7L * 24 * 3600 * 1000))
+        }
+        var tempEndMillis by remember {
+            mutableStateOf(customRange?.second ?: System.currentTimeMillis())
+        }
+        val rangeSdf = remember { SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH) }
+
+        AlertDialog(
+            onDismissRequest = { showDateRangeFilterDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Filter by Date Range",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Filter Room FTS results within a specific date range:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text("Quick Presets:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "Today" to 0,
+                            "Last 7 Days" to 7,
+                            "Last 30 Days" to 30,
+                            "Last 90 Days" to 90
+                        ).forEach { (presetLabel, days) ->
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val now = System.currentTimeMillis()
+                                    if (days == 0) {
+                                        val c = Calendar.getInstance().apply {
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }
+                                        tempStartMillis = c.timeInMillis
+                                        tempEndMillis = now
+                                    } else {
+                                        tempStartMillis = now - days.toLong() * 24 * 3600 * 1000
+                                        tempEndMillis = now
+                                    }
+                                },
+                                label = { Text(presetLabel, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val c = Calendar.getInstance().apply { timeInMillis = tempStartMillis }
+                                DatePickerDialog(context, { _, y, m, d ->
+                                    val newCal = Calendar.getInstance().apply {
+                                        set(y, m, d, 0, 0, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
+                                    tempStartMillis = newCal.timeInMillis
+                                }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
+                            },
+                            modifier = Modifier.weight(1f).testTag("pick_range_start_date_button")
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("From", style = MaterialTheme.typography.labelSmall)
+                                Text(rangeSdf.format(Date(tempStartMillis)), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val c = Calendar.getInstance().apply { timeInMillis = tempEndMillis }
+                                DatePickerDialog(context, { _, y, m, d ->
+                                    val newCal = Calendar.getInstance().apply {
+                                        set(y, m, d, 23, 59, 59)
+                                        set(Calendar.MILLISECOND, 999)
+                                    }
+                                    tempEndMillis = newCal.timeInMillis
+                                }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
+                            },
+                            modifier = Modifier.weight(1f).testTag("pick_range_end_date_button")
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("To", style = MaterialTheme.typography.labelSmall)
+                                Text(rangeSdf.format(Date(tempEndMillis)), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val s = minOf(tempStartMillis, tempEndMillis)
+                        val e = maxOf(tempStartMillis, tempEndMillis)
+                        viewModel.setCustomDateRange(Pair(s, e))
+                        showDateRangeFilterDialog = false
+                    },
+                    modifier = Modifier.testTag("apply_date_range_filter_button")
+                ) {
+                    Text("Apply Range")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDateRangeFilterDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -316,6 +459,89 @@ fun TransactionsScreen(
                 shadowElevation = 1.dp
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
+                    // Header with Title & Room FTS indicator
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Search Transactions",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Room FTS",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    if (customRange != null) {
+                        val rangeFormatter = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.DateRange,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Date: ${rangeFormatter.format(Date(customRange!!.first))} – ${rangeFormatter.format(Date(customRange!!.second))}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        viewModel.setCustomDateRange(null)
+                                        viewModel.setDateFilter(DateFilterType.THIS_MONTH)
+                                    },
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .testTag("clear_date_range_chip_button")
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear range", modifier = Modifier.size(12.dp))
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { viewModel.setSearchQuery(it) },
@@ -349,12 +575,22 @@ fun TransactionsScreen(
                                     }
                                 }
                                 IconButton(
+                                    onClick = { showDateRangeFilterDialog = true },
+                                    modifier = Modifier.testTag("pick_search_date_range_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.DateRange,
+                                        contentDescription = "Pick Date Range",
+                                        tint = if (customRange != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(
                                     onClick = { showDatePicker = true },
                                     modifier = Modifier.testTag("pick_search_date_button")
                                 ) {
                                     Icon(
                                         Icons.Default.CalendarMonth,
-                                        contentDescription = "Pick date to filter",
+                                        contentDescription = "Pick single date",
                                         tint = if (searchScope == SearchFilterScope.DATE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -534,12 +770,23 @@ fun TransactionsScreen(
                                 }
                                 item {
                                     FilterChip(
+                                        selected = customRange != null,
+                                        onClick = { showDateRangeFilterDialog = true },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(12.dp))
+                                        },
+                                        label = { Text("Pick Date Range...", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.testTag("pick_date_range_chip")
+                                    )
+                                }
+                                item {
+                                    FilterChip(
                                         selected = false,
                                         onClick = { showDatePicker = true },
                                         leadingIcon = {
                                             Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(12.dp))
                                         },
-                                        label = { Text("Pick Date...", style = MaterialTheme.typography.labelSmall) }
+                                        label = { Text("Pick Single Date...", style = MaterialTheme.typography.labelSmall) }
                                     )
                                 }
                             }
@@ -549,7 +796,7 @@ fun TransactionsScreen(
             }
 
             // Active Search/Filter Summary Banner
-            if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All") {
+            if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All" || customRange != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
                     shape = RoundedCornerShape(12.dp),
@@ -581,6 +828,9 @@ fun TransactionsScreen(
                                             append(" in ${searchScope.label}")
                                         }
                                     }
+                                    if (customRange != null) {
+                                        append(" (Custom Date Range)")
+                                    }
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -594,7 +844,9 @@ fun TransactionsScreen(
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
-                                .clickable { viewModel.clearAllFilters() }
+                                .clickable {
+                                    viewModel.clearAllFilters()
+                                }
                                 .padding(4.dp)
                                 .testTag("reset_filters_button")
                         )
@@ -614,8 +866,7 @@ fun TransactionsScreen(
                         selected = dateFilter == df,
                         onClick = {
                             if (df == DateFilterType.CUSTOM) {
-                                exportDateReportInitialTab = 1
-                                showExportDateReportDialog = true
+                                showDateRangeFilterDialog = true
                             } else {
                                 viewModel.setDateFilter(df)
                             }

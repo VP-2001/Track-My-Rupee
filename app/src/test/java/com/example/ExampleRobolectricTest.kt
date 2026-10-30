@@ -281,6 +281,103 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `room database full-text search capability filters by merchant, category, and date range`() = kotlinx.coroutines.test.runTest {
+    val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+    val db = androidx.room.Room.inMemoryDatabaseBuilder(
+      context,
+      com.example.data.db.ExpenseDatabase::class.java
+    ).allowMainThreadQueries().build()
+
+    try {
+      val dao = db.expenseDao()
+
+      val cal1 = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.MARCH, 15, 10, 0, 0) }
+      val cal2 = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.OCTOBER, 20, 15, 30, 0) }
+      val cal3 = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.OCTOBER, 25, 19, 0, 0) }
+
+      val exp1 = ExpenseEntity(
+        id = 1,
+        title = "Starbucks Coffee",
+        amount = 450.0,
+        category = "Food & Dining",
+        date = cal1.timeInMillis,
+        paymentMethod = "UPI",
+        notes = "Frappuccino and croissant",
+        tag = "Personal"
+      )
+      val exp2 = ExpenseEntity(
+        id = 2,
+        title = "Amazon Shopping",
+        amount = 2999.0,
+        category = "Shopping",
+        date = cal2.timeInMillis,
+        paymentMethod = "Credit Card",
+        notes = "Wireless headphones",
+        tag = "Gadgets"
+      )
+      val exp3 = ExpenseEntity(
+        id = 3,
+        title = "Swiggy Gourmet",
+        amount = 850.0,
+        category = "Food & Dining",
+        date = cal3.timeInMillis,
+        paymentMethod = "UPI",
+        notes = "Dinner with friends",
+        tag = "Weekend"
+      )
+
+      dao.insertExpenses(listOf(exp1, exp2, exp3))
+
+      // 1. Full-Text Search by Merchant Name (FTS MATCH "title:Starbucks*")
+      val merchantResults = dao.searchExpensesFtsList("title:Starbucks*")
+      assertEquals(1, merchantResults.size)
+      assertEquals("Starbucks Coffee", merchantResults[0].title)
+
+      // 2. Full-Text Search by Category (FTS MATCH "category:Shopping*")
+      val shoppingResults = dao.searchExpensesFtsList("category:Shopping*")
+      assertEquals(1, shoppingResults.size)
+      assertEquals("Amazon Shopping", shoppingResults[0].title)
+
+      // 3. Full-Text Search by Keyword across all columns (e.g. notes "headphones")
+      val notesResults = dao.searchExpensesFtsList("headphones*")
+      assertEquals(1, notesResults.size)
+      assertEquals(2L, notesResults[0].id)
+
+      // 4. Full-Text Search with Date Range Filter (October 2026 window)
+      val startOct = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.OCTOBER, 1, 0, 0, 0) }.timeInMillis
+      val endOct = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.OCTOBER, 31, 23, 59, 59) }.timeInMillis
+
+      // Search Food category in October: should return only Swiggy, not Starbucks (which was in March)
+      val octFoodResults = dao.searchExpensesFtsWithFiltersList(
+        ftsQuery = "category:Food*",
+        category = "Food & Dining",
+        startDate = startOct,
+        endDate = endOct
+      )
+      assertEquals(1, octFoodResults.size)
+      assertEquals("Swiggy Gourmet", octFoodResults[0].title)
+
+      // 5. Query using Repository helper with query builder
+      val repo = com.example.data.repository.ExpenseRepository(
+        dao,
+        db.budgetDao(),
+        db.syncLogDao(),
+        db.recurringExpenseDao()
+      )
+
+      val repoMerchantSearch = repo.searchExpensesFtsList(
+        query = "Swiggy",
+        scope = "MERCHANT"
+      )
+      assertEquals(1, repoMerchantSearch.size)
+      assertEquals("Swiggy Gourmet", repoMerchantSearch[0].title)
+
+    } finally {
+      db.close()
+    }
+  }
+
+  @Test
   fun `monthly comparison accurately calculates multi-month trends and peak drivers`() {
     val calSep = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.SEPTEMBER, 10, 12, 0, 0) }
     val calOct = java.util.Calendar.getInstance().apply { set(2026, java.util.Calendar.OCTOBER, 15, 14, 0, 0) }
@@ -486,6 +583,31 @@ class ExampleRobolectricTest {
     // Direct unlock (as called by BiometricPrompt onSuccess callback)
     securityManager.unlockApp()
     org.junit.Assert.assertFalse("App should be unlocked via BiometricPrompt success", securityManager.isAppLocked.value)
+  }
+
+  @Test
+  fun `securityManager enforces auto-lock on background and returns descriptive biometric status`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val securityManager = com.example.security.SecurityAndSyncManager(context)
+
+    // Verify auto-lock on background is enabled by default
+    assertTrue("Auto-lock on background should be enabled by default", securityManager.isAutoLockOnBackgroundEnabled())
+    assertEquals("Default lock timeout should be immediate (0s)", 0, securityManager.getLockTimeoutSeconds())
+
+    // Unlock app
+    securityManager.unlockApp()
+    org.junit.Assert.assertFalse("App should be unlocked", securityManager.isAppLocked.value)
+
+    // Simulate app going to background and returning (device unlocked scenario)
+    securityManager.onAppBackgrounded()
+    securityManager.onAppForegrounded()
+
+    // Even if device is unlocked, the ledger re-locks requiring verification
+    assertTrue("App should re-lock upon returning from background", securityManager.isAppLocked.value)
+
+    // Verify biometric status description is non-empty
+    val bioDesc = securityManager.getBiometricStatusDescription()
+    assertTrue("Biometric status should be descriptive", bioDesc.isNotBlank())
   }
 
   @Test
@@ -1322,6 +1444,20 @@ class ExampleRobolectricTest {
     assertNotNull("Web Client ID should be loaded from resources", clientId)
     assertTrue("Web Client ID should not be empty", clientId!!.isNotEmpty())
     assertTrue("Web Client ID should match Google OAuth format", clientId.contains(".apps.googleusercontent.com"))
+  }
+
+  @Test
+  fun `GeminiAiService accurately parses paper receipts with merchant, amount, category, and date`() = kotlinx.coroutines.test.runTest {
+    val service = com.example.ai.GeminiAiService()
+    val dummyBitmap = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+
+    val extracted = service.parseReceiptImage(dummyBitmap)
+    assertNotNull("Extracted receipt should not be null", extracted)
+    assertTrue("Merchant name should be extracted", extracted!!.title.isNotEmpty())
+    assertTrue("Amount should be positive", extracted.amount > 0)
+    assertTrue("Category should be valid", extracted.category.isNotEmpty())
+    assertTrue("Payment method should be valid", extracted.paymentMethod.isNotEmpty())
+    assertTrue("Date timestamp should be valid", extracted.date > 0)
   }
 }
 

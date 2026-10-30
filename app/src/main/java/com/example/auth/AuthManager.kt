@@ -8,7 +8,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
+import com.example.util.findActivity
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -57,33 +57,62 @@ class AuthManager(private val context: Context) {
         _authErrorMessage.value = null
     }
 
-    fun getWebClientId(): String? {
+    fun getWebClientId(): String {
         return try {
-            context.getString(R.string.default_web_client_id)
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            if (resId != 0) {
+                val str = context.getString(resId)
+                if (str.isNotBlank()) str else FALLBACK_WEB_CLIENT_ID
+            } else {
+                FALLBACK_WEB_CLIENT_ID
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "default_web_client_id string not found in resources: ${e.message}")
-            null
+            Log.w(TAG, "default_web_client_id string lookup error: ${e.message}, using fallback client ID")
+            FALLBACK_WEB_CLIENT_ID
         }
     }
 
     suspend fun signInWithGoogle(activityContext: Context): Result<FirebaseUser> {
         val clientId = getWebClientId()
-            ?: return Result.failure(IllegalStateException("Google Sign-In Web Client ID is not configured in resources."))
 
         _isAuthenticating.value = true
         _authErrorMessage.value = null
 
+        val resolvedContext = activityContext.findActivity() ?: activityContext
+
         return try {
+            // Build GetGoogleIdOption configured to show account chooser without filtering
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId(clientId)
+                .setAutoSelectEnabled(false)
+                .build()
+
             val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+
             val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
                 .addCredentialOption(signInOption)
                 .build()
 
-            val result = credentialManager.getCredential(activityContext, request)
+            val result = credentialManager.getCredential(resolvedContext, request)
             val credential = result.credential
 
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+            val googleIdToken: String? = when {
+                credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL -> {
+                    GoogleIdTokenCredential.createFrom(credential.data).idToken
+                }
+                credential is CustomCredential -> {
+                    try {
+                        GoogleIdTokenCredential.createFrom(credential.data).idToken
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                else -> null
+            }
+
+            if (!googleIdToken.isNullOrBlank()) {
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 val authResult = auth.signInWithCredential(authCredential).await()
                 val user = authResult.user
@@ -94,13 +123,31 @@ class AuthManager(private val context: Context) {
                 Log.i(TAG, "Successfully signed in user: ${user.displayName} (${user.email})")
                 Result.success(user)
             } else {
-                val err = "Unexpected credential format returned: ${credential::class.java.name}"
+                val err = "Unexpected credential format: ${credential::class.java.name} (type=${(credential as? CustomCredential)?.type})"
                 _authErrorMessage.value = err
                 _isAuthenticating.value = false
                 Result.failure(IllegalStateException(err))
             }
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In flow cancelled or dismissed by user: ${e.message}")
+            _isAuthenticating.value = false
+            Result.failure(e)
+        } catch (e: androidx.credentials.exceptions.NoCredentialException) {
+            val msg = "No Google account found on device. Please sign in to a Google account in device Settings / Google Play Store."
+            Log.w(TAG, "NoCredentialException: $msg", e)
+            _authErrorMessage.value = msg
+            _isAuthenticating.value = false
+            Result.failure(e)
+        } catch (e: androidx.credentials.exceptions.GetCredentialProviderConfigurationException) {
+            val msg = "Google Play Services configuration issue. Please verify SHA-1 and OAuth client configuration."
+            Log.e(TAG, "GetCredentialProviderConfigurationException: $msg", e)
+            _authErrorMessage.value = msg
+            _isAuthenticating.value = false
+            Result.failure(e)
+        } catch (e: androidx.credentials.exceptions.GetCredentialUnsupportedException) {
+            val msg = "Credential Manager is not supported by Google Play Services on this device."
+            Log.e(TAG, "GetCredentialUnsupportedException: $msg", e)
+            _authErrorMessage.value = msg
             _isAuthenticating.value = false
             Result.failure(e)
         } catch (e: Exception) {
@@ -119,7 +166,7 @@ class AuthManager(private val context: Context) {
             return Result.success(current)
         }
 
-        val clientId = getWebClientId() ?: return Result.success(null)
+        val clientId = getWebClientId()
 
         return try {
             val googleIdOption = GetGoogleIdOption.Builder()
@@ -171,5 +218,6 @@ class AuthManager(private val context: Context) {
 
     companion object {
         private const val TAG = "AuthManager"
+        const val FALLBACK_WEB_CLIENT_ID = "731002068274-mhb15ervr3udeaqenjg54loljpq7utu3.apps.googleusercontent.com"
     }
 }

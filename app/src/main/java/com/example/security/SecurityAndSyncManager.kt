@@ -86,6 +86,36 @@ class SecurityAndSyncManager(private val context: Context) {
         _lastSyncTime.value = now
     }
 
+    fun isAutoLockOnBackgroundEnabled(): Boolean = prefs.getBoolean("auto_lock_on_background", true)
+
+    fun setAutoLockOnBackgroundEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_lock_on_background", enabled).apply()
+    }
+
+    fun getLockTimeoutSeconds(): Int = prefs.getInt("lock_timeout_seconds", 0)
+
+    fun setLockTimeoutSeconds(seconds: Int) {
+        prefs.edit().putInt("lock_timeout_seconds", seconds).apply()
+    }
+
+    fun onAppBackgrounded() {
+        if (isLockEnabled() && isAutoLockOnBackgroundEnabled()) {
+            prefs.edit().putLong("last_backgrounded_time", System.currentTimeMillis()).apply()
+        }
+    }
+
+    fun onAppForegrounded() {
+        if (!isLockEnabled()) return
+        if (isAutoLockOnBackgroundEnabled()) {
+            val bgTime = prefs.getLong("last_backgrounded_time", 0L)
+            val timeoutMillis = getLockTimeoutSeconds() * 1000L
+            val now = System.currentTimeMillis()
+            if (bgTime > 0L && (now - bgTime >= timeoutMillis)) {
+                _isAppLocked.value = true
+            }
+        }
+    }
+
     fun canUseBiometrics(): Boolean {
         val biometricManager = BiometricManager.from(context)
         val canStrong = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
@@ -94,6 +124,24 @@ class SecurityAndSyncManager(private val context: Context) {
             BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
         ) == BiometricManager.BIOMETRIC_SUCCESS
         return canStrong || canWeak || canStrongOrDevice
+    }
+
+    fun getBiometricStatusDescription(): String {
+        val biometricManager = BiometricManager.from(context)
+        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+            BiometricManager.BIOMETRIC_SUCCESS -> "Strong Biometric (Fingerprint/Face) Enrolled & Active"
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "Biometric hardware present, but no Fingerprint/Face enrolled in device Settings"
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "No biometric sensor detected on this device (4-digit PIN fallback active)"
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric sensor is temporarily unavailable"
+            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> "Security update required for biometric hardware"
+            else -> {
+                if (biometricManager.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS) {
+                    "Device PIN / Pattern Lock Active"
+                } else {
+                    "PIN Security Active (Default: 1234)"
+                }
+            }
+        }
     }
 
     fun authenticateWithBiometrics(
@@ -114,7 +162,19 @@ class SecurityAndSyncManager(private val context: Context) {
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    onError(errString.toString())
+                    when (errorCode) {
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                        BiometricPrompt.ERROR_USER_CANCELED -> {
+                            onError("Biometric prompt dismissed. Enter 4-digit PIN.")
+                        }
+                        BiometricPrompt.ERROR_LOCKOUT,
+                        BiometricPrompt.ERROR_LOCKOUT_PERMANENT -> {
+                            onError("Too many biometric attempts. Please enter your 4-digit PIN.")
+                        }
+                        else -> {
+                            onError(errString.toString())
+                        }
+                    }
                 }
 
                 override fun onAuthenticationFailed() {
@@ -130,9 +190,9 @@ class SecurityAndSyncManager(private val context: Context) {
         ) == BiometricManager.BIOMETRIC_SUCCESS
 
         val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Expense Tracker")
-            .setSubtitle("Fingerprint or Face unlock required on launch")
-            .setDescription("Authenticate to securely access your personal financial data and ledger")
+            .setTitle("Unlock Sensitive Financial Ledger")
+            .setSubtitle("Verify identity to access transactions & balances")
+            .setDescription("Sensitive financial records are protected even when device is unlocked")
 
         if (canStrongOrDevice) {
             promptInfoBuilder.setAllowedAuthenticators(
@@ -151,9 +211,9 @@ class SecurityAndSyncManager(private val context: Context) {
         } catch (e: Exception) {
             try {
                 val fallbackPrompt = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Unlock Expense Tracker")
+                    .setTitle("Unlock Financial Ledger")
                     .setSubtitle("Fingerprint or Face unlock")
-                    .setDescription("Authenticate to access financial data")
+                    .setDescription("Authenticate to view financial transactions")
                     .setNegativeButtonText("Use PIN")
                     .build()
                 prompt.authenticate(fallbackPrompt)

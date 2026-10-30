@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.app.Activity
+import com.example.util.findActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -252,12 +253,10 @@ fun AccountBottomSheet(
                 GuestSignInView(
                     isAuthenticating = isAuthenticating,
                     onSignInWithGoogle = {
-                        val activity = context as? Activity
-                        if (activity != null) {
-                            viewModel.signInWithGoogle(activity) { success ->
-                                if (success) {
-                                    onDismiss()
-                                }
+                        val activity = context.findActivity() ?: (context as? Activity) ?: context
+                        viewModel.signInWithGoogle(activity) { success ->
+                            if (success) {
+                                onDismiss()
                             }
                         }
                     }

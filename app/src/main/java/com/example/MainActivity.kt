@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -62,10 +63,12 @@ import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.AppLockOverlay
 import com.example.ui.screens.BudgetsScreen
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.ReceiptScanScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.TransactionsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.ExpenseViewModel
+import androidx.compose.material.icons.filled.QrCodeScanner
 
 enum class NavigationScreen(val label: String, val icon: ImageVector) {
     DASHBOARD("Home", Icons.Default.Dashboard),
@@ -74,7 +77,8 @@ enum class NavigationScreen(val label: String, val icon: ImageVector) {
     BUDGETS("Budgets", Icons.Default.AccountBalanceWallet),
     AI_ADVISOR("Advisor", Icons.AutoMirrored.Filled.Chat),
     AI_TOOLS("Tools", Icons.Default.AutoAwesome),
-    REPORTS("Backup", Icons.Default.Security)
+    REPORTS("Backup", Icons.Default.Security),
+    RECEIPT_SCAN("Scan", Icons.Default.QrCodeScanner)
 }
 
 
@@ -98,8 +102,16 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Enforce biometric/PIN verification if app was backgrounded
+        viewModel.securityManager.onAppForegrounded()
         // Automatically check and add any due recurring transactions at scheduled intervals
         viewModel.processDueRecurringExpenses()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Record timestamp when app is backgrounded or minimized
+        viewModel.securityManager.onAppBackgrounded()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -138,6 +150,8 @@ fun ExpenseTrackerApp(
     var expenseToEdit by remember { mutableStateOf<ExpenseEntity?>(null) }
     var preFillTransaction by remember { mutableStateOf<ExtractedTransaction?>(null) }
 
+    val isCameraScanning = currentScreen == NavigationScreen.RECEIPT_SCAN
+
     if (isLocked) {
         AppLockOverlay(
             securityManager = viewModel.securityManager,
@@ -151,38 +165,72 @@ fun ExpenseTrackerApp(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {
-                Surface(
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                if (!isCameraScanning) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.background,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "Track My Rupee",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Track My Rupee",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
 
-                        ProfileAvatarButton(
-                            viewModel = viewModel,
-                            onClick = { isAccountSheetOpen = true }
-                        )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                androidx.compose.material3.IconButton(
+                                    onClick = { currentScreen = NavigationScreen.RECEIPT_SCAN },
+                                    modifier = Modifier.testTag("topbar_scan_receipt_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = "Scan Paper Receipt",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                if (viewModel.securityManager.isLockEnabled()) {
+                                    androidx.compose.material3.IconButton(
+                                        onClick = { viewModel.securityManager.lockApp() },
+                                        modifier = Modifier.testTag("quick_lock_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Lock Ledger Now",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                ProfileAvatarButton(
+                                    viewModel = viewModel,
+                                    onClick = { isAccountSheetOpen = true }
+                                )
+                            }
+                        }
                     }
                 }
             },
             bottomBar = {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surfaceDim,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.testTag("bottom_nav_bar")
-                ) {
+                if (!isCameraScanning) {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surfaceDim,
+                        tonalElevation = 0.dp,
+                        modifier = Modifier.testTag("bottom_nav_bar")
+                    ) {
                     val navItems = listOf(
                         NavigationScreen.DASHBOARD,
                         NavigationScreen.TRANSACTIONS,
@@ -222,9 +270,10 @@ fun ExpenseTrackerApp(
                         )
                     }
                 }
-            },
+            }
+        },
             floatingActionButton = {
-                if (currentScreen == NavigationScreen.DASHBOARD) {
+                if (!isCameraScanning && currentScreen == NavigationScreen.DASHBOARD) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -299,13 +348,16 @@ fun ExpenseTrackerApp(
                         onNavigateToAnalytics = { currentScreen = NavigationScreen.ANALYTICS },
                         onNavigateToBudgets = { currentScreen = NavigationScreen.BUDGETS },
                         onNavigateToAiTools = { tool ->
-                            aiToolsTab = when (tool) {
-                                "scan" -> 0
-                                "statement" -> 1
-                                "voice" -> 2
-                                else -> 0
+                            if (tool == "scan") {
+                                currentScreen = NavigationScreen.RECEIPT_SCAN
+                            } else {
+                                aiToolsTab = when (tool) {
+                                    "statement" -> 1
+                                    "voice" -> 2
+                                    else -> 0
+                                }
+                                currentScreen = NavigationScreen.AI_TOOLS
                             }
-                            currentScreen = NavigationScreen.AI_TOOLS
                         },
                         onNavigateToReports = { currentScreen = NavigationScreen.REPORTS },
                         onAddExpenseClick = {
@@ -346,6 +398,20 @@ fun ExpenseTrackerApp(
                         viewModel = viewModel,
                         initialTab = aiToolsTab,
                         onOpenAddExpenseWithPreFill = { extracted ->
+                            expenseToEdit = null
+                            preFillTransaction = extracted
+                            isAddExpenseOpen = true
+                        },
+                        onOpenReceiptScannerScreen = {
+                            currentScreen = NavigationScreen.RECEIPT_SCAN
+                        }
+                    )
+
+                    NavigationScreen.RECEIPT_SCAN -> ReceiptScanScreen(
+                        viewModel = viewModel,
+                        onNavigateBack = { currentScreen = NavigationScreen.DASHBOARD },
+                        onNavigateToTransactions = { currentScreen = NavigationScreen.TRANSACTIONS },
+                        onOpenFullAddExpense = { extracted ->
                             expenseToEdit = null
                             preFillTransaction = extracted
                             isAddExpenseOpen = true

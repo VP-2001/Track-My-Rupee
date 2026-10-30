@@ -55,12 +55,15 @@ import com.example.notification.BudgetAlertThreshold
 import com.example.notification.BudgetAlertResult
 import com.example.security.CryptoBackupManager
 import com.example.security.SecurityAndSyncManager
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -120,6 +123,17 @@ sealed interface MonthlyAiReportUiState {
     data class Success(val report: MonthlyAiSpendingReport) : MonthlyAiReportUiState
     data class Error(val message: String) : MonthlyAiReportUiState
 }
+
+data class SearchFilterParameters(
+    val query: String,
+    val scope: SearchFilterScope,
+    val categoryFilter: String,
+    val paymentFilter: String,
+    val tagFilter: String,
+    val dateFilter: DateFilterType,
+    val customDateRange: Pair<Long, Long>?,
+    val sortType: SortType
+)
 
 class ExpenseViewModel(application: Application) : AndroidViewModel(application) {
     private val db = ExpenseDatabase.getDatabase(application)
@@ -238,6 +252,11 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 syncFirestoreTransactions()
                 onComplete?.invoke(true)
             } else {
+                val ex = result.exceptionOrNull()
+                val err = ex?.localizedMessage ?: "Sign-in was not completed"
+                if (ex !is androidx.credentials.exceptions.GetCredentialCancellationException) {
+                    _syncMessage.value = "Google sign-in error: $err"
+                }
                 onComplete?.invoke(false)
             }
         }
@@ -857,9 +876,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Filtered & Sorted Expenses Stream
+    // Filtered & Sorted Expenses Stream powered by Room Full-Text Search (FTS4)
+    @OptIn(ExperimentalCoroutinesApi::class)
     val filteredExpenses: StateFlow<List<ExpenseEntity>> = combine(
-        repository.allExpenses,
         _searchState,
         _selectedCategoryFilter,
         _selectedPaymentFilter,
@@ -869,120 +888,157 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         _sortType
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
-        val rawList = args[0] as List<ExpenseEntity>
+        val searchState = args[0] as Pair<String, SearchFilterScope>
+        val catFilter = (args[1] as? String) ?: "All"
+        val payFilter = (args[2] as? String) ?: "All"
+        val tagFilter = (args[3] as? String) ?: "All"
+        val dateF = args[4] as DateFilterType
         @Suppress("UNCHECKED_CAST")
-        val searchState = args[1] as Pair<String, SearchFilterScope>
-        val query = searchState.first
-        val scope = searchState.second
-        val catFilter = (args[2] as? String) ?: "All"
-        val payFilter = (args[3] as? String) ?: "All"
-        val tagFilter = (args[4] as? String) ?: "All"
-        val dateF = args[5] as DateFilterType
-        @Suppress("UNCHECKED_CAST")
-        val customRange = args[6] as Pair<Long, Long>?
-        val sortT = args[7] as SortType
+        val customRange = args[5] as Pair<Long, Long>?
+        val sortT = args[6] as SortType
 
-        var list = rawList
+        SearchFilterParameters(
+            query = searchState.first,
+            scope = searchState.second,
+            categoryFilter = catFilter,
+            paymentFilter = payFilter,
+            tagFilter = tagFilter,
+            dateFilter = dateF,
+            customDateRange = customRange,
+            sortType = sortT
+        )
+    }.flatMapLatest { params ->
+        val (start, end) = getDateRangeForFilter(params.dateFilter, params.customDateRange)
+        val query = params.query.trim()
+        val scope = params.scope
+        val cat = if (params.categoryFilter != "All") params.categoryFilter else null
 
-        // 1. Search Query: Filter entries by Category, Date, or Merchant Name
-        if (query.isNotBlank()) {
-            val q = query.trim().lowercase()
-            val todayCal = Calendar.getInstance()
-            val yestCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val isExplicitDateQuery = scope == SearchFilterScope.DATE && query.isNotBlank()
+        val effectiveStart = if (isExplicitDateQuery) null else start
+        val effectiveEnd = if (isExplicitDateQuery) null else end
 
-            list = list.filter { expense ->
-                // Merchant Name Matching (title / bank / credit card)
-                val matchesMerchant = expense.title.lowercase().contains(q) ||
-                        expense.bankName.lowercase().contains(q) ||
-                        expense.creditCardName.lowercase().contains(q)
+        val ftsFlow = if (query.isNotBlank() && scope != SearchFilterScope.DATE) {
+            repository.searchExpensesFts(
+                query = query,
+                scope = scope.name,
+                category = cat,
+                startDate = effectiveStart,
+                endDate = effectiveEnd
+            )
+        } else {
+            repository.searchExpensesFts(
+                query = "",
+                scope = "ALL",
+                category = cat,
+                startDate = effectiveStart,
+                endDate = effectiveEnd
+            )
+        }
 
-                // Category Matching (category / tag)
-                val matchesCategory = expense.category.lowercase().contains(q) ||
-                        expense.tag.lowercase().contains(q)
+        ftsFlow.map { dbList ->
+            var list = dbList
 
-                // Notes Matching
-                val matchesNotes = expense.notes.lowercase().contains(q)
+            // Textual date queries fallback (e.g. "Today", "Yesterday", "Oct 2026", "2026-10-30")
+            if (query.isNotBlank() && (scope == SearchFilterScope.DATE || list.isEmpty())) {
+                val q = query.lowercase()
+                val todayCal = Calendar.getInstance()
+                val yestCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
 
-                // Date Matching (formatted date strings, month names, year, day, today/yesterday)
-                val dateObj = Date(expense.date)
-                val sdf1 = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf2 = SimpleDateFormat("dd MMMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf3 = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf4 = SimpleDateFormat("dd/MM/yyyy", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf5 = SimpleDateFormat("dd-MM-yyyy", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf6 = SimpleDateFormat("EEEE EEE", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf7 = SimpleDateFormat("MMMM", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf8 = SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf9 = SimpleDateFormat("d MMM", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf10 = SimpleDateFormat("d MMMM", Locale.ENGLISH).format(dateObj).lowercase()
-                val sdf11 = SimpleDateFormat("yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                list = repository.allExpenses.first().filter { expense ->
+                    val dateObj = Date(expense.date)
+                    val sdf1 = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf2 = SimpleDateFormat("dd MMMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf3 = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf4 = SimpleDateFormat("dd/MM/yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf5 = SimpleDateFormat("dd-MM-yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf7 = SimpleDateFormat("MMMM", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf8 = SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(dateObj).lowercase()
+                    val sdf11 = SimpleDateFormat("yyyy", Locale.ENGLISH).format(dateObj).lowercase()
 
-                val expCal = Calendar.getInstance().apply { timeInMillis = expense.date }
-                val isToday = expCal.get(Calendar.YEAR) == todayCal.get(Calendar.YEAR) &&
-                        expCal.get(Calendar.DAY_OF_YEAR) == todayCal.get(Calendar.DAY_OF_YEAR)
-                val isYesterday = expCal.get(Calendar.YEAR) == yestCal.get(Calendar.YEAR) &&
-                        expCal.get(Calendar.DAY_OF_YEAR) == yestCal.get(Calendar.DAY_OF_YEAR)
+                    val expCal = Calendar.getInstance().apply { timeInMillis = expense.date }
+                    val isToday = expCal.get(Calendar.YEAR) == todayCal.get(Calendar.YEAR) &&
+                            expCal.get(Calendar.DAY_OF_YEAR) == todayCal.get(Calendar.DAY_OF_YEAR)
+                    val isYesterday = expCal.get(Calendar.YEAR) == yestCal.get(Calendar.YEAR) &&
+                            expCal.get(Calendar.DAY_OF_YEAR) == yestCal.get(Calendar.DAY_OF_YEAR)
 
-                val matchesDate = sdf1.contains(q) ||
-                        sdf2.contains(q) ||
-                        sdf3.contains(q) ||
-                        sdf4.contains(q) ||
-                        sdf5.contains(q) ||
-                        sdf6.contains(q) ||
-                        sdf7.contains(q) ||
-                        sdf8.contains(q) ||
-                        sdf9.contains(q) ||
-                        sdf10.contains(q) ||
-                        (q.length >= 4 && sdf11.contains(q)) ||
-                        (isToday && ("today".contains(q) || q.contains("today"))) ||
-                        (isYesterday && ("yesterday".contains(q) || q.contains("yesterday")))
+                    val matchesDate = sdf1.contains(q) || sdf2.contains(q) || sdf3.contains(q) ||
+                            sdf4.contains(q) || sdf5.contains(q) || sdf7.contains(q) || sdf8.contains(q) ||
+                            (q.length >= 4 && sdf11.contains(q)) ||
+                            (isToday && ("today".contains(q) || q.contains("today"))) ||
+                            (isYesterday && ("yesterday".contains(q) || q.contains("yesterday")))
 
-                when (scope) {
-                    SearchFilterScope.MERCHANT -> matchesMerchant
-                    SearchFilterScope.CATEGORY -> matchesCategory
-                    SearchFilterScope.NOTES -> matchesNotes
-                    SearchFilterScope.DATE -> matchesDate
-                    SearchFilterScope.ALL -> matchesMerchant || matchesCategory || matchesNotes || matchesDate ||
-                            expense.paymentMethod.lowercase().contains(q) ||
-                            expense.amount.toString().contains(q)
+                    val matchesMerchant = expense.title.lowercase().contains(q) ||
+                            expense.bankName.lowercase().contains(q) ||
+                            expense.creditCardName.lowercase().contains(q)
+                    val matchesCategory = expense.category.lowercase().contains(q) ||
+                            expense.tag.lowercase().contains(q)
+                    val matchesNotes = expense.notes.lowercase().contains(q)
+
+                    when (scope) {
+                        SearchFilterScope.MERCHANT -> matchesMerchant
+                        SearchFilterScope.CATEGORY -> matchesCategory
+                        SearchFilterScope.NOTES -> matchesNotes
+                        SearchFilterScope.DATE -> matchesDate
+                        SearchFilterScope.ALL -> matchesMerchant || matchesCategory || matchesNotes || matchesDate ||
+                                expense.paymentMethod.lowercase().contains(q) ||
+                                expense.amount.toString().contains(q)
+                    }
                 }
             }
-        }
 
-        // 2. Category Filter
-        if (catFilter.isNotBlank() && catFilter != "All") {
-            list = list.filter { it.category.equals(catFilter, ignoreCase = true) }
-        }
+            // Secondary filters for payment method and tag
+            if (params.paymentFilter.isNotBlank() && params.paymentFilter != "All") {
+                list = list.filter { it.paymentMethod.equals(params.paymentFilter, ignoreCase = true) }
+            }
+            if (params.tagFilter.isNotBlank() && params.tagFilter != "All") {
+                list = list.filter { it.tag.equals(params.tagFilter, ignoreCase = true) }
+            }
 
-        // 3. Payment Filter
-        if (payFilter.isNotBlank() && payFilter != "All") {
-            list = list.filter { it.paymentMethod.equals(payFilter, ignoreCase = true) }
-        }
-
-        // 4. Tag Filter
-        if (tagFilter.isNotBlank() && tagFilter != "All") {
-            list = list.filter { it.tag.equals(tagFilter, ignoreCase = true) }
-        }
-
-        // 5. Date Filter (Skip if explicitly searching specifically by Date across historical data)
-        val skipDateFilter = scope == SearchFilterScope.DATE && query.isNotBlank()
-        if (!skipDateFilter) {
-            val (start, end) = getDateRangeForFilter(dateF, customRange)
-            list = list.filter { it.date in start..end }
-        }
-
-        // 6. Sorting
-        when (sortT) {
-            SortType.DATE_NEWEST -> list.sortedByDescending { it.date }
-            SortType.DATE_OLDEST -> list.sortedBy { it.date }
-            SortType.AMOUNT_HIGHEST -> list.sortedByDescending { it.amount }
-            SortType.AMOUNT_LOWEST -> list.sortedBy { it.amount }
+            // Sorting
+            when (params.sortType) {
+                SortType.DATE_NEWEST -> list.sortedByDescending { it.date }
+                SortType.DATE_OLDEST -> list.sortedBy { it.date }
+                SortType.AMOUNT_HIGHEST -> list.sortedByDescending { it.amount }
+                SortType.AMOUNT_LOWEST -> list.sortedBy { it.amount }
+            }
         }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    fun searchExpensesWithRoomFts(
+        query: String,
+        scope: SearchFilterScope = SearchFilterScope.ALL,
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): Flow<List<ExpenseEntity>> {
+        return repository.searchExpensesFts(
+            query = query,
+            scope = scope.name,
+            category = category,
+            startDate = startDate,
+            endDate = endDate
+        )
+    }
+
+    suspend fun searchExpensesWithRoomFtsList(
+        query: String,
+        scope: SearchFilterScope = SearchFilterScope.ALL,
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<ExpenseEntity> {
+        return repository.searchExpensesFtsList(
+            query = query,
+            scope = scope.name,
+            category = category,
+            startDate = startDate,
+            endDate = endDate
+        )
+    }
 
     // Current Month Summary Metrics
     val monthExpenses: StateFlow<List<ExpenseEntity>> = repository.allExpenses.combine(_dateFilter) { list, dFilter ->

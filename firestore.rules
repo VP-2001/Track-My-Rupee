@@ -14,9 +14,8 @@ service cloud.firestore {
     function isValidUserProfile(data, userId) {
       return data.userId == userId &&
         data.email is string &&
-        data.email.size() > 0 &&
         data.email.size() <= 200 &&
-        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+        (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
         (!('lastSyncedAt' in data) || data.lastSyncedAt is timestamp);
     }
 
@@ -34,10 +33,10 @@ service cloud.firestore {
         data.paymentMethod is string &&
         data.paymentMethod.size() > 0 &&
         data.paymentMethod.size() <= 100 &&
-        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-        (!('tag' in data) || (data.tag is string && data.tag.size() <= 100)) &&
-        (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 100)) &&
-        (!('creditCardName' in data) || (data.creditCardName is string && data.creditCardName.size() <= 100)) &&
+        (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 1000)) &&
+        (!('tag' in data) || data.tag == null || (data.tag is string && data.tag.size() <= 100)) &&
+        (!('bankName' in data) || data.bankName == null || (data.bankName is string && data.bankName.size() <= 100)) &&
+        (!('creditCardName' in data) || data.creditCardName == null || (data.creditCardName is string && data.creditCardName.size() <= 100)) &&
         (!('receiptUri' in data) || data.receiptUri == null || (data.receiptUri is string && data.receiptUri.size() <= 500)) &&
         (!('localId' in data) || data.localId is number) &&
         (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&

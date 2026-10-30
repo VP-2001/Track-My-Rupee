@@ -32,6 +32,81 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE title LIKE '%' || :query || '%' OR notes LIKE '%' || :query || '%' OR category LIKE '%' || :query || '%' OR tag LIKE '%' || :query || '%' ORDER BY date DESC")
     fun searchExpensesFlow(query: String): Flow<List<ExpenseEntity>>
 
+    // Room Full-Text Search (FTS4) Queries using MATCH operator
+    @Query("""
+        SELECT expenses.* FROM expenses
+        JOIN expenses_fts ON expenses.id = expenses_fts.rowid
+        WHERE expenses_fts MATCH :ftsQuery
+        ORDER BY expenses.date DESC, expenses.id DESC
+    """)
+    fun searchExpensesFtsFlow(ftsQuery: String): Flow<List<ExpenseEntity>>
+
+    @Query("""
+        SELECT expenses.* FROM expenses
+        JOIN expenses_fts ON expenses.id = expenses_fts.rowid
+        WHERE expenses_fts MATCH :ftsQuery
+        ORDER BY expenses.date DESC, expenses.id DESC
+    """)
+    suspend fun searchExpensesFtsList(ftsQuery: String): List<ExpenseEntity>
+
+    @Query("""
+        SELECT expenses.* FROM expenses
+        JOIN expenses_fts ON expenses.id = expenses_fts.rowid
+        WHERE expenses_fts MATCH :ftsQuery
+          AND (:category IS NULL OR :category = 'All' OR expenses.category = :category)
+          AND (:startDate IS NULL OR expenses.date >= :startDate)
+          AND (:endDate IS NULL OR expenses.date <= :endDate)
+        ORDER BY expenses.date DESC, expenses.id DESC
+    """)
+    fun searchExpensesFtsWithFiltersFlow(
+        ftsQuery: String,
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): Flow<List<ExpenseEntity>>
+
+    @Query("""
+        SELECT expenses.* FROM expenses
+        JOIN expenses_fts ON expenses.id = expenses_fts.rowid
+        WHERE expenses_fts MATCH :ftsQuery
+          AND (:category IS NULL OR :category = 'All' OR expenses.category = :category)
+          AND (:startDate IS NULL OR expenses.date >= :startDate)
+          AND (:endDate IS NULL OR expenses.date <= :endDate)
+        ORDER BY expenses.date DESC, expenses.id DESC
+    """)
+    suspend fun searchExpensesFtsWithFiltersList(
+        ftsQuery: String,
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<ExpenseEntity>
+
+    @Query("""
+        SELECT * FROM expenses
+        WHERE (:category IS NULL OR :category = 'All' OR category = :category)
+          AND (:startDate IS NULL OR date >= :startDate)
+          AND (:endDate IS NULL OR date <= :endDate)
+        ORDER BY date DESC, id DESC
+    """)
+    fun getExpensesWithFiltersFlow(
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): Flow<List<ExpenseEntity>>
+
+    @Query("""
+        SELECT * FROM expenses
+        WHERE (:category IS NULL OR :category = 'All' OR category = :category)
+          AND (:startDate IS NULL OR date >= :startDate)
+          AND (:endDate IS NULL OR date <= :endDate)
+        ORDER BY date DESC, id DESC
+    """)
+    suspend fun getExpensesWithFiltersList(
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<ExpenseEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: ExpenseEntity): Long
 

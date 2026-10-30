@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.app.Activity
+import com.example.util.findActivity
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -115,6 +116,7 @@ fun ReportsScreen(
 
     val securityManager = viewModel.securityManager
     var isLockEnabled by remember { mutableStateOf(securityManager.isLockEnabled()) }
+    var isAutoLockOnBackground by remember { mutableStateOf(securityManager.isAutoLockOnBackgroundEnabled()) }
     val googleEmail by securityManager.googleUserEmail.collectAsStateWithLifecycle()
     val lastSyncTime by securityManager.lastSyncTime.collectAsStateWithLifecycle()
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
@@ -539,13 +541,14 @@ fun ReportsScreen(
                 border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SophisticatedDarkSurface)
             ) {
                 val bioSupported = remember { securityManager.canUseBiometrics() }
+                val bioStatusText = remember { securityManager.getBiometricStatusDescription() }
                 Column(modifier = Modifier.padding(18.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Fingerprint, contentDescription = "Security", tint = com.example.ui.theme.SophisticatedPrimary)
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
@@ -556,7 +559,7 @@ fun ReportsScreen(
                                     color = com.example.ui.theme.SophisticatedDarkOnSurface
                                 )
                                 Text(
-                                    "Startup unlock requires Fingerprint or Face unlock",
+                                    "Protects sensitive financial data with Fingerprint, Face, or PIN",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
                                 )
@@ -572,7 +575,8 @@ fun ReportsScreen(
                                     isLockEnabled = enabled
                                     securityManager.setLockEnabled(enabled)
                                 }
-                            }
+                            },
+                            modifier = Modifier.testTag("app_lock_switch")
                         )
                     }
 
@@ -595,25 +599,68 @@ fun ReportsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (bioSupported) "Biometrics Active: Fingerprint / Face prompt on launch (PIN fallback: 1234)"
-                                    else "PIN Code Active (Default PIN: 1234)",
+                                    text = bioStatusText,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = com.example.ui.theme.SophisticatedDarkOnSurface
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Background Auto-lock Toggle
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Passcode / PIN Code", style = MaterialTheme.typography.bodyMedium, color = com.example.ui.theme.SophisticatedDarkOnSurface)
-                            OutlinedButton(onClick = { showPinSetupDialog = true }) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Auto-Lock on Background",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurface
+                                )
+                                Text(
+                                    "Requires verification when switching apps (even if device unlocked)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isAutoLockOnBackground,
+                                onCheckedChange = { enabled ->
+                                    isAutoLockOnBackground = enabled
+                                    securityManager.setAutoLockOnBackgroundEnabled(enabled)
+                                },
+                                modifier = Modifier.testTag("auto_lock_background_switch")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showPinSetupDialog = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Icon(Icons.Default.Password, contentDescription = "Set PIN", modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Change PIN")
+                            }
+
+                            Button(
+                                onClick = { securityManager.lockApp() },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("lock_ledger_now_button")
+                            ) {
+                                Icon(Icons.Default.Lock, contentDescription = "Lock", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Lock Now")
                             }
                         }
                     }
@@ -783,10 +830,8 @@ fun ReportsScreen(
                                 Column(horizontalAlignment = Alignment.End) {
                                     Button(
                                         onClick = {
-                                            val act = context as? Activity
-                                            if (act != null) {
-                                                viewModel.signInWithGoogle(act)
-                                            }
+                                            val act = context.findActivity() ?: (context as? Activity) ?: context
+                                            viewModel.signInWithGoogle(act)
                                         },
                                         enabled = !isAuthenticating,
                                         modifier = Modifier.testTag("reports_google_sign_in_button")

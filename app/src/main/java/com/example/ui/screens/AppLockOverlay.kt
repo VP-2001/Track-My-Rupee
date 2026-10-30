@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.example.security.SecurityAndSyncManager
+import com.example.util.findFragmentActivity
 
 @Composable
 fun AppLockOverlay(
@@ -52,15 +53,18 @@ fun AppLockOverlay(
     onUnlocked: () -> Unit
 ) {
     val context = LocalContext.current
+    val fragmentActivity = remember(context) {
+        context.findFragmentActivity() ?: (context as? FragmentActivity)
+    }
     var pinInput by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
     var biometricFeedback by remember { mutableStateOf<String?>(null) }
     val bioAvailable = remember { securityManager.canUseBiometrics() }
 
-    LaunchedEffect(Unit) {
-        if (context is FragmentActivity && bioAvailable) {
+    LaunchedEffect(fragmentActivity, bioAvailable) {
+        if (fragmentActivity != null && bioAvailable) {
             securityManager.authenticateWithBiometrics(
-                activity = context,
+                activity = fragmentActivity,
                 onSuccess = { onUnlocked() },
                 onError = { err ->
                     biometricFeedback = err
@@ -159,10 +163,10 @@ fun AppLockOverlay(
             // Quick Biometric Trigger Button (Fingerprint or Face)
             OutlinedButton(
                 onClick = {
-                    if (context is FragmentActivity) {
+                    if (fragmentActivity != null) {
                         if (securityManager.canUseBiometrics()) {
                             securityManager.authenticateWithBiometrics(
-                                activity = context,
+                                activity = fragmentActivity,
                                 onSuccess = { onUnlocked() },
                                 onError = { err ->
                                     biometricFeedback = err
@@ -172,10 +176,12 @@ fun AppLockOverlay(
                         } else {
                             Toast.makeText(
                                 context,
-                                "Biometric hardware not enrolled. Enter default PIN: 1234",
+                                securityManager.getBiometricStatusDescription(),
                                 Toast.LENGTH_LONG
                             ).show()
                         }
+                    } else {
+                        Toast.makeText(context, "Activity context not available. Enter PIN: 1234", Toast.LENGTH_SHORT).show()
                     }
                 },
                 shape = RoundedCornerShape(14.dp),
@@ -219,13 +225,13 @@ fun AppLockOverlay(
                             "BIO" -> {
                                 IconButton(
                                     onClick = {
-                                        if (context is FragmentActivity) {
+                                        if (fragmentActivity != null) {
                                             securityManager.authenticateWithBiometrics(
-                                                activity = context,
+                                                activity = fragmentActivity,
                                                 onSuccess = { onUnlocked() },
                                                 onError = {
                                                     biometricFeedback = it
-                                                    Toast.makeText(context, "Biometric: $it", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
                                                 }
                                             )
                                         }

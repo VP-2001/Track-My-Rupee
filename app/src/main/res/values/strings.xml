@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Track My Rupee</string>
+    <string name="default_web_client_id" translatable="false">731002068274-mhb15ervr3udeaqenjg54loljpq7utu3.apps.googleusercontent.com</string>
 </resources>

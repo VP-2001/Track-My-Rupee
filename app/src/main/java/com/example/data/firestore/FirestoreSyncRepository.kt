@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
+private const val FALLBACK_DATABASE_ID = "ai-studio-android-trackmyr-367a8e33-93d8-4bdd-b42b-02cc6c261dff"
+
 private fun getFirestoreInstance(context: Context): FirebaseFirestore {
     val appContext = context.applicationContext
     val app = if (FirebaseApp.getApps(appContext).isEmpty()) {
@@ -25,11 +27,19 @@ private fun getFirestoreInstance(context: Context): FirebaseFirestore {
     } else {
         FirebaseApp.getInstance()
     }
+    val dbId = try {
+        val resId = appContext.resources.getIdentifier("firestore_database_id", "string", appContext.packageName)
+        if (resId != 0) {
+            val v = appContext.getString(resId)
+            if (v.isNotBlank()) v else FALLBACK_DATABASE_ID
+        } else {
+            FALLBACK_DATABASE_ID
+        }
+    } catch (e: Exception) {
+        FALLBACK_DATABASE_ID
+    }
     return try {
-        FirebaseFirestore.getInstance(
-            app,
-            appContext.getString(R.string.firestore_database_id)
-        )
+        FirebaseFirestore.getInstance(app, dbId)
     } catch (e: Exception) {
         FirebaseFirestore.getInstance(app)
     }
@@ -105,14 +115,18 @@ class FirestoreSyncRepository(
 
         try {
             val firestoreModel = FirestoreExpense.fromExpenseEntity(expense, uid, docId)
+            val safeTitle = expense.title.trim().ifBlank { "Expense" }
+            val safeCategory = expense.category.trim().ifBlank { "Miscellaneous" }
+            val safePaymentMethod = expense.paymentMethod.trim().ifBlank { "UPI" }
+
             val dataMap = hashMapOf<String, Any?>(
                 "userId" to uid,
                 "localId" to expense.id,
-                "title" to expense.title,
+                "title" to safeTitle,
                 "amount" to expense.amount,
                 "date" to expense.date,
-                "category" to expense.category,
-                "paymentMethod" to expense.paymentMethod,
+                "category" to safeCategory,
+                "paymentMethod" to safePaymentMethod,
                 "notes" to expense.notes,
                 "tag" to expense.tag,
                 "bankName" to expense.bankName,
@@ -180,14 +194,18 @@ class FirestoreSyncRepository(
                 val key = "${local.title.trim().lowercase()}_${local.amount}_${local.date}"
                 if (!cloudLookup.containsKey(key)) {
                     val docId = if (local.id > 0) "exp_local_${local.id}" else userExpensesCollection(uid).document().id
+                    val safeTitle = local.title.trim().ifBlank { "Expense" }
+                    val safeCategory = local.category.trim().ifBlank { "Miscellaneous" }
+                    val safePaymentMethod = local.paymentMethod.trim().ifBlank { "UPI" }
+
                     val dataMap = hashMapOf<String, Any?>(
                         "userId" to uid,
                         "localId" to local.id,
-                        "title" to local.title,
+                        "title" to safeTitle,
                         "amount" to local.amount,
                         "date" to local.date,
-                        "category" to local.category,
-                        "paymentMethod" to local.paymentMethod,
+                        "category" to safeCategory,
+                        "paymentMethod" to safePaymentMethod,
                         "notes" to local.notes,
                         "tag" to local.tag,
                         "bankName" to local.bankName,
@@ -216,10 +234,11 @@ class FirestoreSyncRepository(
             }
 
             // 5. Update user profile document with lastSyncedAt
+            val userEmail = auth.currentUser?.email?.takeIf { it.isNotBlank() } ?: "user_${uid.take(8)}@account.google.com"
             val userProfileMap = hashMapOf<String, Any?>(
                 "userId" to uid,
-                "email" to (auth.currentUser?.email ?: ""),
-                "displayName" to (auth.currentUser?.displayName ?: "User"),
+                "email" to userEmail,
+                "displayName" to (auth.currentUser?.displayName ?: "Google User"),
                 "lastSyncedAt" to FieldValue.serverTimestamp()
             )
             userDocument(uid).set(userProfileMap).await()

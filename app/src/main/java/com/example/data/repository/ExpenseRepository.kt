@@ -132,6 +132,8 @@ class ExpenseRepository(
 
         for (item in dueItems) {
             if (!item.isActive) continue
+            // If manual recording is chosen, do not auto-advance or skip without user confirmation
+            if (!item.autoCreateExpense) continue
 
             var nextDue = item.nextDueDate
             var iterations = 0
@@ -436,5 +438,77 @@ class ExpenseRepository(
         }
 
         importedExpenses.size
+    }
+
+    /**
+     * Executes Room Full-Text Search (FTS4) query with category and date range constraints.
+     * Returns a reactive Flow directly from Room SQLite database.
+     */
+    fun searchExpensesFts(
+        query: String,
+        scope: String = "ALL",
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): Flow<List<ExpenseEntity>> {
+        val ftsQuery = RoomFtsQueryBuilder.buildFtsQuery(query, scope)
+        return if (ftsQuery.isNotBlank()) {
+            expenseDao.searchExpensesFtsWithFiltersFlow(
+                ftsQuery = ftsQuery,
+                category = if (category.isNullOrBlank() || category.equals("All", ignoreCase = true)) null else category,
+                startDate = startDate,
+                endDate = endDate
+            )
+        } else {
+            expenseDao.getExpensesWithFiltersFlow(
+                category = if (category.isNullOrBlank() || category.equals("All", ignoreCase = true)) null else category,
+                startDate = startDate,
+                endDate = endDate
+            )
+        }
+    }
+
+    suspend fun searchExpensesFtsList(
+        query: String,
+        scope: String = "ALL",
+        category: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<ExpenseEntity> = withContext(Dispatchers.IO) {
+        val ftsQuery = RoomFtsQueryBuilder.buildFtsQuery(query, scope)
+        if (ftsQuery.isNotBlank()) {
+            expenseDao.searchExpensesFtsWithFiltersList(
+                ftsQuery = ftsQuery,
+                category = if (category.isNullOrBlank() || category.equals("All", ignoreCase = true)) null else category,
+                startDate = startDate,
+                endDate = endDate
+            )
+        } else {
+            expenseDao.getExpensesWithFiltersList(
+                category = if (category.isNullOrBlank() || category.equals("All", ignoreCase = true)) null else category,
+                startDate = startDate,
+                endDate = endDate
+            )
+        }
+    }
+}
+
+object RoomFtsQueryBuilder {
+    /**
+     * Sanitizes and builds an SQLite FTS4 query string.
+     * Strips non-alphanumeric punctuation and formats words with trailing '*' wildcard.
+     * Maps merchant/title, category, or notes scopes into column-specific FTS match expressions.
+     */
+    fun buildFtsQuery(rawQuery: String, scope: String = "ALL"): String {
+        val clean = rawQuery.replace(Regex("[^a-zA-Z0-9\\s]"), " ").trim()
+        val tokens = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return ""
+
+        return when (scope.uppercase()) {
+            "MERCHANT", "TITLE" -> tokens.joinToString(" ") { "title:$it*" }
+            "CATEGORY" -> tokens.joinToString(" ") { "category:$it*" }
+            "NOTES" -> tokens.joinToString(" ") { "notes:$it*" }
+            else -> tokens.joinToString(" ") { "$it*" }
+        }
     }
 }

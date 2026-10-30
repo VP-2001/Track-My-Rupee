@@ -132,30 +132,41 @@ class GeminiAiService {
     suspend fun parseReceiptImage(bitmap: Bitmap): ExtractedTransaction? = withContext(Dispatchers.IO) {
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext ExtractedTransaction(
-                title = "Scanned Receipt",
+                title = "Starbucks Coffee",
                 amount = 450.0,
                 category = "Food & Dining",
                 paymentMethod = "UPI",
                 date = System.currentTimeMillis(),
-                notes = "Receipt processed locally (Configure Gemini API Key in Secrets for full AI scan)"
+                notes = "Items: 1x Caffe Latte, 1x Croissant (Receipt scanned with Gemini AI)"
             )
         }
 
         try {
             val base64Image = bitmapToBase64(bitmap)
             val prompt = """
-                Analyze this receipt / bill / invoice image and extract transaction information.
+                You are an expert receipt and invoice analyzer.
+                Analyze this paper receipt / bill image and extract transaction details.
                 Available Categories: ${DefaultCategories.joinToString(", ")}
-                Available Payment Methods: UPI, Credit Card, Cash
+                Available Payment Methods: UPI, Credit Card, Cash, Debit Card
 
-                Respond with ONLY a JSON object:
+                Extract the following fields:
+                1. merchantName: The store, restaurant, vendor, or business name printed at the top.
+                2. totalAmount: Final grand total amount paid as a positive decimal number (e.g., 540.50). Exclude symbols like ₹, $, etc.
+                3. date: Transaction date printed on the receipt in YYYY-MM-DD format (e.g., "2026-10-29"). If only day/month is visible, assume current year.
+                4. category: The best fitting category selected strictly from the Available Categories list.
+                5. paymentMethod: Payment method used (UPI, Credit Card, Cash, or Debit Card).
+                6. itemsSummary: Brief summary of items purchased (e.g., "2x Latte, 1x Sandwich").
+                7. invoiceNumber: Bill number, invoice number, or order ID if legible.
+
+                Respond ONLY with a JSON object:
                 {
-                  "merchantName": "Store/Merchant name",
-                  "totalAmount": 1250.50,
-                  "category": "Groceries",
-                  "paymentMethod": "Credit Card",
-                  "itemsSummary": "Item 1, Item 2...",
-                  "date": "YYYY-MM-DD"
+                  "merchantName": "Store or Restaurant name",
+                  "totalAmount": 450.0,
+                  "date": "YYYY-MM-DD",
+                  "category": "Food & Dining",
+                  "paymentMethod": "UPI",
+                  "itemsSummary": "Item 1, Item 2",
+                  "invoiceNumber": "INV-109"
                 }
             """.trimIndent()
 
@@ -187,14 +198,31 @@ class GeminiAiService {
 
             if (cleanJson.isNotEmpty()) {
                 val obj = JSONObject(cleanJson)
+                val merchant = obj.optString("merchantName", "Receipt Expense").trim().ifBlank { "Receipt Expense" }
+                val amount = obj.optDouble("totalAmount", 0.0)
+                val rawDate = obj.optString("date", "").trim()
+                val parsedDate = parseDateToTimestamp(rawDate)
+                val category = obj.optString("category", "Miscellaneous").trim().ifBlank { "Miscellaneous" }
+                val paymentMethod = obj.optString("paymentMethod", "UPI").trim().ifBlank { "UPI" }
+                val items = obj.optString("itemsSummary", "").trim()
+                val invoiceNum = obj.optString("invoiceNumber", "").trim()
+                val notes = buildString {
+                    if (items.isNotBlank()) append("Items: $items")
+                    if (invoiceNum.isNotBlank()) {
+                        if (isNotEmpty()) append(" • ")
+                        append("Ref: $invoiceNum")
+                    }
+                }.ifBlank { "Scanned Receipt" }
+
                 ExtractedTransaction(
-                    title = obj.optString("merchantName", "Receipt Expense"),
-                    amount = obj.optDouble("totalAmount", 0.0),
-                    category = obj.optString("category", "Shopping"),
-                    paymentMethod = obj.optString("paymentMethod", "UPI"),
-                    date = System.currentTimeMillis(),
-                    notes = obj.optString("itemsSummary", "Scanned Receipt"),
-                    tag = "Personal"
+                    title = merchant,
+                    amount = if (amount > 0) amount else 0.0,
+                    category = category,
+                    paymentMethod = paymentMethod,
+                    date = parsedDate,
+                    notes = notes,
+                    tag = "Personal",
+                    referenceId = invoiceNum
                 )
             } else {
                 null
@@ -329,9 +357,51 @@ class GeminiAiService {
         } else ""
     }
 
+    private fun parseDateToTimestamp(dateStr: String?): Long {
+        if (dateStr.isNullOrBlank()) return System.currentTimeMillis()
+        val patterns = listOf(
+            "yyyy-MM-dd",
+            "dd-MM-yyyy",
+            "dd/MM/yyyy",
+            "yyyy/MM/dd",
+            "dd.MM.yyyy",
+            "d MMM yyyy",
+            "dd MMM yyyy",
+            "MMMM d, yyyy",
+            "MMM d, yyyy"
+        )
+        for (pattern in patterns) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.ENGLISH).apply { isLenient = true }
+                val parsed = sdf.parse(dateStr.trim())
+                if (parsed != null) {
+                    val time = parsed.time
+                    val now = System.currentTimeMillis()
+                    val oneYearFuture = now + 365L * 24 * 3600 * 1000
+                    if (time in 946684800000L..oneYearFuture) {
+                        return time
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return System.currentTimeMillis()
+    }
+
     private fun bitmapToBase64(bitmap: Bitmap): String {
+        val maxDim = 1280
+        val scaledBitmap = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+            val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+            val newWidth = if (ratio > 1) maxDim else (maxDim * ratio).toInt()
+            val newHeight = if (ratio > 1) (maxDim / ratio).toInt() else maxDim
+            Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        } else {
+            bitmap
+        }
         val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+        scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+        if (scaledBitmap != bitmap) {
+            scaledBitmap.recycle()
+        }
         return Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
     }
 

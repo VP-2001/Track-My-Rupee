@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cameraswitch
@@ -105,7 +106,8 @@ import java.nio.ByteBuffer
 fun AiToolsScreen(
     viewModel: ExpenseViewModel,
     initialTab: Int = 0,
-    onOpenAddExpenseWithPreFill: (ExtractedTransaction) -> Unit
+    onOpenAddExpenseWithPreFill: (ExtractedTransaction) -> Unit,
+    onOpenReceiptScannerScreen: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(initialTab) }
     val tabTitles = listOf("Receipt Scanner", "Bank Statement Converter", "Voice Assistant", "AI Advisor Chat", "Backup Vault")
@@ -159,7 +161,11 @@ fun AiToolsScreen(
         }
 
         when (selectedTab) {
-            0 -> ReceiptScannerTab(viewModel = viewModel, onPreFill = onOpenAddExpenseWithPreFill)
+            0 -> ReceiptScannerTab(
+                viewModel = viewModel,
+                onPreFill = onOpenAddExpenseWithPreFill,
+                onOpenFullScreenScanner = onOpenReceiptScannerScreen
+            )
             1 -> BankStatementTab(viewModel = viewModel)
             2 -> VoiceAssistantTab(viewModel = viewModel, onPreFill = onOpenAddExpenseWithPreFill)
             3 -> AiChatScreen(viewModel = viewModel)
@@ -180,7 +186,8 @@ fun AiToolsScreen(
 @Composable
 fun ReceiptScannerTab(
     viewModel: ExpenseViewModel,
-    onPreFill: (ExtractedTransaction) -> Unit
+    onPreFill: (ExtractedTransaction) -> Unit,
+    onOpenFullScreenScanner: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -237,6 +244,47 @@ fun ReceiptScannerTab(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenFullScreenScanner() },
+                shape = RoundedCornerShape(16.dp),
+                color = com.example.ui.theme.SophisticatedDarkSurfaceVariant,
+                border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = null,
+                        tint = com.example.ui.theme.SophisticatedPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Open Full Screen Camera Scanner",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = com.example.ui.theme.SophisticatedDarkOnSurface
+                        )
+                        Text(
+                            text = "Full viewfinder with laser reticle & instant review",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Open",
+                        tint = com.example.ui.theme.SophisticatedPrimary
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
         }
 
