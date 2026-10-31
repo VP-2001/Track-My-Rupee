@@ -63,13 +63,17 @@ fun AppLockOverlay(
 
     LaunchedEffect(fragmentActivity, bioAvailable) {
         if (fragmentActivity != null && bioAvailable) {
-            securityManager.authenticateWithBiometrics(
-                activity = fragmentActivity,
-                onSuccess = { onUnlocked() },
-                onError = { err ->
-                    biometricFeedback = err
-                }
-            )
+            // Wait briefly for activity window to gain focus before presenting biometric dialog
+            kotlinx.coroutines.delay(250)
+            if (!fragmentActivity.isFinishing && !fragmentActivity.isDestroyed) {
+                securityManager.authenticateWithBiometrics(
+                    activity = fragmentActivity,
+                    onSuccess = { onUnlocked() },
+                    onError = { err ->
+                        biometricFeedback = err
+                    }
+                )
+            }
         }
     }
 
@@ -110,7 +114,7 @@ fun AppLockOverlay(
             )
 
             Text(
-                text = "Biometric (Fingerprint/Face) or 4-digit PIN required",
+                text = "Use Fingerprint/Face or Enter PIN (Default: 1234)",
                 style = MaterialTheme.typography.bodySmall,
                 color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
             )

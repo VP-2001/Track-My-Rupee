@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -212,12 +213,13 @@ fun ReceiptScannerTab(
     val imageCapture = remember { ImageCapture.Builder().build() }
 
     val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
                 val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
                 val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
                 if (bitmap != null) {
                     viewModel.scanReceiptImage(bitmap) { res ->
                         if (res != null) onPreFill(res)
@@ -444,7 +446,11 @@ fun ReceiptScannerTab(
                 }
 
                 OutlinedButton(
-                    onClick = { galleryLauncher.launch("image/*") },
+                    onClick = {
+                        galleryLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
                     Icon(Icons.Default.PhotoLibrary, contentDescription = "Gallery")

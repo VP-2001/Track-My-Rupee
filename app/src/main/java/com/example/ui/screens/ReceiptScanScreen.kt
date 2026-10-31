@@ -10,6 +10,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -190,9 +191,9 @@ fun ReceiptScanScreen(
     var showReviewSheet by remember { mutableStateOf(false) }
     var scanErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Pick receipt from device storage as zero-permission fallback
+    // Pick receipt from device storage as zero-permission Photo Picker
     val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             scope.launch(Dispatchers.IO) {
@@ -283,7 +284,11 @@ fun ReceiptScanScreen(
                 // Permission Fallback Screen
                 CameraPermissionPrompt(
                     onRequestPermission = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                    onPickGallery = { galleryLauncher.launch("image/*") },
+                    onPickGallery = {
+                        galleryLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
                     onNavigateBack = onNavigateBack
                 )
             } else {
@@ -480,7 +485,11 @@ fun ReceiptScanScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
-                                    .clickable { galleryLauncher.launch("image/*") }
+                                    .clickable {
+                                        galleryLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
                                     .padding(8.dp)
                                     .testTag("receipt_scan_gallery_button")
                             ) {

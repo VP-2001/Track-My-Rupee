@@ -102,16 +102,24 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Enforce biometric/PIN verification if app was backgrounded
-        viewModel.securityManager.onAppForegrounded()
-        // Automatically check and add any due recurring transactions at scheduled intervals
-        viewModel.processDueRecurringExpenses()
+        try {
+            // Enforce biometric/PIN verification if app was backgrounded
+            viewModel.securityManager.onAppForegrounded()
+            // Automatically check and add any due recurring transactions at scheduled intervals
+            viewModel.processDueRecurringExpenses()
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error in onResume: ${e.message}", e)
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        // Record timestamp when app is backgrounded or minimized
-        viewModel.securityManager.onAppBackgrounded()
+        try {
+            // Record timestamp when app is backgrounded or minimized
+            viewModel.securityManager.onAppBackgrounded()
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error in onStop: ${e.message}", e)
+        }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {

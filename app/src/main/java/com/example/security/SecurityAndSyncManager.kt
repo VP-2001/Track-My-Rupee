@@ -117,30 +117,38 @@ class SecurityAndSyncManager(private val context: Context) {
     }
 
     fun canUseBiometrics(): Boolean {
-        val biometricManager = BiometricManager.from(context)
-        val canStrong = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
-        val canWeak = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS
-        val canStrongOrDevice = biometricManager.canAuthenticate(
-            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-        ) == BiometricManager.BIOMETRIC_SUCCESS
-        return canStrong || canWeak || canStrongOrDevice
+        return try {
+            val biometricManager = BiometricManager.from(context)
+            val canStrong = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+            val canWeak = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS
+            val canStrongOrDevice = biometricManager.canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            ) == BiometricManager.BIOMETRIC_SUCCESS
+            canStrong || canWeak || canStrongOrDevice
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     fun getBiometricStatusDescription(): String {
-        val biometricManager = BiometricManager.from(context)
-        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> "Strong Biometric (Fingerprint/Face) Enrolled & Active"
-            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "Biometric hardware present, but no Fingerprint/Face enrolled in device Settings"
-            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "No biometric sensor detected on this device (4-digit PIN fallback active)"
-            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric sensor is temporarily unavailable"
-            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> "Security update required for biometric hardware"
-            else -> {
-                if (biometricManager.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS) {
-                    "Device PIN / Pattern Lock Active"
-                } else {
-                    "PIN Security Active (Default: 1234)"
+        return try {
+            val biometricManager = BiometricManager.from(context)
+            when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+                BiometricManager.BIOMETRIC_SUCCESS -> "Strong Biometric (Fingerprint/Face) Enrolled & Active"
+                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "Biometric hardware present, but no Fingerprint/Face enrolled in device Settings"
+                BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "No biometric sensor detected on this device (4-digit PIN fallback active)"
+                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric sensor is temporarily unavailable"
+                BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> "Security update required for biometric hardware"
+                else -> {
+                    if (biometricManager.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS) {
+                        "Device PIN / Pattern Lock Active"
+                    } else {
+                        "PIN Security Active (Default: 1234)"
+                    }
                 }
             }
+        } catch (_: Throwable) {
+            "PIN Security Active (Default: 1234)"
         }
     }
 
@@ -149,77 +157,85 @@ class SecurityAndSyncManager(private val context: Context) {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val executor = ContextCompat.getMainExecutor(activity)
-        val prompt = BiometricPrompt(
-            activity,
-            executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    _isAppLocked.value = false
-                    onSuccess()
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    when (errorCode) {
-                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
-                        BiometricPrompt.ERROR_USER_CANCELED -> {
-                            onError("Biometric prompt dismissed. Enter 4-digit PIN.")
-                        }
-                        BiometricPrompt.ERROR_LOCKOUT,
-                        BiometricPrompt.ERROR_LOCKOUT_PERMANENT -> {
-                            onError("Too many biometric attempts. Please enter your 4-digit PIN.")
-                        }
-                        else -> {
-                            onError(errString.toString())
-                        }
-                    }
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    onError("Biometric authentication not recognized. Please retry or enter PIN.")
-                }
-            }
-        )
-
-        val biometricManager = BiometricManager.from(activity)
-        val canStrongOrDevice = biometricManager.canAuthenticate(
-            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-        ) == BiometricManager.BIOMETRIC_SUCCESS
-
-        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Sensitive Financial Ledger")
-            .setSubtitle("Verify identity to access transactions & balances")
-            .setDescription("Sensitive financial records are protected even when device is unlocked")
-
-        if (canStrongOrDevice) {
-            promptInfoBuilder.setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            )
-        } else {
-            promptInfoBuilder
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK
-                )
-                .setNegativeButtonText("Use App PIN")
+        if (activity.isFinishing || activity.isDestroyed) {
+            return
         }
 
         try {
-            prompt.authenticate(promptInfoBuilder.build())
-        } catch (e: Exception) {
-            try {
-                val fallbackPrompt = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Unlock Financial Ledger")
-                    .setSubtitle("Fingerprint or Face unlock")
-                    .setDescription("Authenticate to view financial transactions")
-                    .setNegativeButtonText("Use PIN")
-                    .build()
-                prompt.authenticate(fallbackPrompt)
-            } catch (fallbackEx: Exception) {
-                onError(fallbackEx.message ?: e.message ?: "Biometric prompt error")
+            val executor = ContextCompat.getMainExecutor(activity)
+            val prompt = BiometricPrompt(
+                activity,
+                executor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        super.onAuthenticationSucceeded(result)
+                        _isAppLocked.value = false
+                        onSuccess()
+                    }
+
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        super.onAuthenticationError(errorCode, errString)
+                        when (errorCode) {
+                            BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                            BiometricPrompt.ERROR_USER_CANCELED -> {
+                                onError("Biometric prompt dismissed. Enter 4-digit PIN.")
+                            }
+                            BiometricPrompt.ERROR_LOCKOUT,
+                            BiometricPrompt.ERROR_LOCKOUT_PERMANENT -> {
+                                onError("Too many biometric attempts. Please enter your 4-digit PIN.")
+                            }
+                            else -> {
+                                onError(errString.toString())
+                            }
+                        }
+                    }
+
+                    override fun onAuthenticationFailed() {
+                        super.onAuthenticationFailed()
+                        onError("Biometric authentication not recognized. Please retry or enter PIN.")
+                    }
+                }
+            )
+
+            val biometricManager = BiometricManager.from(activity)
+            val canStrongOrDevice = biometricManager.canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            ) == BiometricManager.BIOMETRIC_SUCCESS
+
+            val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Unlock Sensitive Financial Ledger")
+                .setSubtitle("Verify identity to access transactions & balances")
+                .setDescription("Sensitive financial records are protected even when device is unlocked")
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && canStrongOrDevice) {
+                promptInfoBuilder.setAllowedAuthenticators(
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                )
+            } else {
+                promptInfoBuilder
+                    .setAllowedAuthenticators(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK
+                    )
+                    .setNegativeButtonText("Use App PIN")
             }
+
+            try {
+                prompt.authenticate(promptInfoBuilder.build())
+            } catch (e: Exception) {
+                try {
+                    val fallbackPrompt = BiometricPrompt.PromptInfo.Builder()
+                        .setTitle("Unlock Financial Ledger")
+                        .setSubtitle("Fingerprint or Face unlock")
+                        .setDescription("Authenticate to view financial transactions")
+                        .setNegativeButtonText("Use PIN")
+                        .build()
+                    prompt.authenticate(fallbackPrompt)
+                } catch (fallbackEx: Throwable) {
+                    onError(fallbackEx.message ?: e.message ?: "Biometric prompt error")
+                }
+            }
+        } catch (t: Throwable) {
+            onError("Biometric authentication unavailable on this device. Enter PIN.")
         }
     }
 

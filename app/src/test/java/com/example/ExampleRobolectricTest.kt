@@ -1459,6 +1459,14 @@ class ExampleRobolectricTest {
     assertTrue("Payment method should be valid", extracted.paymentMethod.isNotEmpty())
     assertTrue("Date timestamp should be valid", extracted.date > 0)
   }
+
+  @Test
+  fun `MainActivity launches and resumes without throwing exception`() {
+    val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
+    val activity = controller.setup().get()
+    assertNotNull(activity)
+    assertNotNull(activity.findViewById(android.R.id.content))
+  }
 }
 
 
