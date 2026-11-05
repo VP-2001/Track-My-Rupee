@@ -163,6 +163,31 @@ class FirestoreSyncRepository(
         }
     }
 
+    suspend fun deleteExpenseFromCloud(expense: ExpenseEntity): Result<Unit> = withContext(Dispatchers.IO) {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
+        val collection = userExpensesCollection(uid)
+        try {
+            if (expense.id > 0) {
+                val docRef = collection.document("exp_local_${expense.id}")
+                docRef.delete().await()
+            }
+            val snapshot = collection.whereEqualTo("localId", expense.id).get().await()
+            for (doc in snapshot.documents) {
+                doc.reference.delete().await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "users/$uid/expenses")
+            Result.failure(e)
+        }
+    }
+
     suspend fun syncWithRoom(roomRepository: ExpenseRepository): Result<SyncSummary> = withContext(Dispatchers.IO) {
         val uid = try {
             requireUserId()

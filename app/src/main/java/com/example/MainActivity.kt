@@ -107,6 +107,11 @@ class MainActivity : FragmentActivity() {
             viewModel.securityManager.onAppForegrounded()
             // Automatically check and add any due recurring transactions at scheduled intervals
             viewModel.processDueRecurringExpenses()
+            // Automatically synchronize Firestore cloud transactions on return to app
+            if (viewModel.firestoreSyncRepository.isUserSignedIn() && viewModel.securityManager.isAutoSyncEnabled()) {
+                viewModel.syncFirestoreTransactions(silent = true)
+                viewModel.startAutomaticCloudSync()
+            }
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Error in onResume: ${e.message}", e)
         }
@@ -391,7 +396,8 @@ fun ExpenseTrackerApp(
                     )
 
                     NavigationScreen.ANALYTICS -> AnalyticsScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onNavigateToTransactions = { currentScreen = NavigationScreen.TRANSACTIONS }
                     )
 
                     NavigationScreen.BUDGETS -> BudgetsScreen(

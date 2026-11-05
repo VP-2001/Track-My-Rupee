@@ -54,13 +54,20 @@ import com.google.firebase.auth.FirebaseUser
 import com.example.notification.BudgetAlertThreshold
 import com.example.notification.BudgetAlertResult
 import com.example.security.CryptoBackupManager
+import com.example.security.GoogleDriveBackupManager
 import com.example.security.SecurityAndSyncManager
+import android.net.Uri
+import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -76,11 +83,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class DateFilterType(val label: String) {
-    THIS_MONTH("This Month"),
     TODAY("Today"),
     YESTERDAY("Yesterday"),
-    LAST_7_DAYS("Last 7 Days"),
-    ALL_TIME("All Time"),
+    THIS_WEEK("This Week"),
+    THIS_MONTH("This Month"),
+    PREVIOUS_MONTH("Previous Month"),
+    ALL_TIME("All"),
     CUSTOM("Custom")
 }
 
@@ -262,30 +270,42 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun syncFirestoreTransactions(onComplete: ((Boolean) -> Unit)? = null) {
+    private var cloudSyncJob: Job? = null
+
+    fun syncFirestoreTransactions(silent: Boolean = false, onComplete: ((Boolean) -> Unit)? = null) {
         viewModelScope.launch {
             if (!firestoreSyncRepository.isUserSignedIn()) {
-                _syncMessage.value = "Please sign in with Google to sync transactions to Firebase Firestore."
+                if (!silent) {
+                    _syncMessage.value = "Please sign in with Google to sync transactions to Firebase Firestore."
+                }
                 onComplete?.invoke(false)
                 return@launch
             }
             _isCloudSyncing.value = true
-            _syncMessage.value = "Synchronizing ledger with Firebase Firestore..."
+            if (!silent) {
+                _syncMessage.value = "Synchronizing ledger with Firebase Firestore..."
+            }
             try {
                 val result = firestoreSyncRepository.syncWithRoom(repository)
                 if (result.isSuccess) {
                     val summary = result.getOrNull()
                     _syncSummary.value = summary
                     securityManager.recordSyncSuccess()
-                    _syncMessage.value = summary?.message ?: "Transactions successfully synchronized with Firestore!"
+                    if (!silent) {
+                        _syncMessage.value = summary?.message ?: "Transactions successfully synchronized with Firestore!"
+                    }
                     onComplete?.invoke(true)
                 } else {
                     val err = result.exceptionOrNull()?.localizedMessage ?: "Sync failed"
-                    _syncMessage.value = "Firestore sync error: $err"
+                    if (!silent) {
+                        _syncMessage.value = "Firestore sync error: $err"
+                    }
                     onComplete?.invoke(false)
                 }
             } catch (e: Exception) {
-                _syncMessage.value = "Sync exception: ${e.message}"
+                if (!silent) {
+                    _syncMessage.value = "Sync exception: ${e.message}"
+                }
                 onComplete?.invoke(false)
             } finally {
                 _isCloudSyncing.value = false
@@ -293,8 +313,65 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Continuously listens to real-time changes from Cloud Firestore across all devices
+     * and automatically reconciles incoming cloud transactions into the local Room database.
+     */
+    fun startAutomaticCloudSync() {
+        cloudSyncJob?.cancel()
+        if (!firestoreSyncRepository.isUserSignedIn() || !securityManager.isAutoSyncEnabled()) {
+            return
+        }
+        cloudSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                firestoreSyncRepository.observeCloudExpenses()
+                    .catch { e ->
+                        Log.w("ExpenseViewModel", "Automatic Firestore snapshot stream: ${e.message}")
+                    }
+                    .collect { cloudExpenses ->
+                        reconcileCloudSnapshotWithRoom(cloudExpenses)
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("ExpenseViewModel", "Automatic cloud sync error: ${e.message}", e)
+            }
+        }
+    }
+
+    fun stopAutomaticCloudSync() {
+        cloudSyncJob?.cancel()
+        cloudSyncJob = null
+    }
+
+    private suspend fun reconcileCloudSnapshotWithRoom(cloudExpenses: List<com.example.data.firestore.FirestoreExpense>) {
+        if (cloudExpenses.isEmpty()) return
+        val localExpenses = repository.getExpensesList()
+        val localLookup = localExpenses.associateBy {
+            "${it.title.trim().lowercase()}_${it.amount}_${it.date}"
+        }
+        val toInsert = mutableListOf<ExpenseEntity>()
+        for (cloud in cloudExpenses) {
+            val key = "${cloud.title.trim().lowercase()}_${cloud.amount}_${cloud.date}"
+            if (!localLookup.containsKey(key)) {
+                toInsert.add(cloud.toExpenseEntity())
+            }
+        }
+        if (toInsert.isNotEmpty()) {
+            repository.insertExpenses(toInsert)
+            securityManager.recordSyncSuccess()
+            _syncSummary.value = com.example.data.firestore.SyncSummary(
+                uploadedCount = 0,
+                downloadedCount = toInsert.size,
+                totalCloudCount = cloudExpenses.size,
+                message = "Auto-synced: ${toInsert.size} transactions received from cloud"
+            )
+        }
+    }
+
     fun signOut(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
+            stopAutomaticCloudSync()
             authManager.signOut()
             securityManager.signOutGoogle()
             repository.addSyncLog("SIGN_OUT", 0, "SUCCESS", "Local Vault", "Signed out of Google Account")
@@ -425,6 +502,13 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val created = repository.executeRecurringExpenseNow(id)
             if (created != null) {
                 _recurringActionMessage.value = "Recorded bill: ${created.title} (${created.formattedAmount})"
+                if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                    val uploadResult = firestoreSyncRepository.uploadExpense(created)
+                    if (uploadResult.isSuccess) {
+                        repository.updateExpense(created.copy(syncStatus = "SYNCED"))
+                        securityManager.recordSyncSuccess()
+                    }
+                }
             }
         }
     }
@@ -434,6 +518,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val created = repository.processDueRecurringExpenses()
             if (created.isNotEmpty()) {
                 _recurringActionMessage.value = "Auto-created ${created.size} recurring bill(s): ${created.take(2).joinToString { it.title }}"
+                if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                    syncFirestoreTransactions(silent = true)
+                }
             }
         }
     }
@@ -853,12 +940,39 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         viewModelScope.launch {
-            // Purge all false starter/sample seeded data immediately
-            repository.purgeSampleSeedData()
             // Check and automatically create entries for any due recurring bills
-            repository.processDueRecurringExpenses()
+            val created = repository.processDueRecurringExpenses()
             // Silent auto sign-in if account is already authorized on this device
             authManager.attemptAutoSignIn()
+            if (created.isNotEmpty() && firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                syncFirestoreTransactions(silent = true)
+            }
+        }
+
+        // Automatic continuous cloud synchronization when authenticated
+        viewModelScope.launch {
+            currentUser.collect { user ->
+                if (user != null) {
+                    if (securityManager.isAutoSyncEnabled()) {
+                        syncFirestoreTransactions(silent = true)
+                        startAutomaticCloudSync()
+                    }
+                } else {
+                    stopAutomaticCloudSync()
+                }
+            }
+        }
+
+        // React immediately if user toggles auto-sync setting in preferences
+        viewModelScope.launch {
+            securityManager.isAutoSyncEnabled.collect { enabled ->
+                if (enabled && currentUser.value != null) {
+                    syncFirestoreTransactions(silent = true)
+                    startAutomaticCloudSync()
+                } else {
+                    stopAutomaticCloudSync()
+                }
+            }
         }
     }
 
@@ -1947,7 +2061,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     fun setDateFilter(df: DateFilterType) { _dateFilter.value = df }
     fun setCustomDateRange(range: Pair<Long, Long>?) {
         _customDateRange.value = range
-        _dateFilter.value = DateFilterType.CUSTOM
+        if (range != null) {
+            _dateFilter.value = DateFilterType.CUSTOM
+        }
     }
     fun setSortType(s: SortType) { _sortType.value = s }
 
@@ -1974,6 +2090,11 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             _lastDeletedExpenses.value = toDelete
             repository.deleteExpensesByIds(ids)
             clearExpenseSelection()
+            if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                for (item in toDelete) {
+                    firestoreSyncRepository.deleteExpenseFromCloud(item)
+                }
+            }
         }
     }
 
@@ -1983,6 +2104,11 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             if (restoreList.isNotEmpty()) {
                 repository.insertExpenses(restoreList)
                 _lastDeletedExpenses.value = emptyList()
+                if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                    for (item in restoreList) {
+                        firestoreSyncRepository.uploadExpense(item)
+                    }
+                }
             }
         }
     }
@@ -2001,27 +2127,41 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         creditCardName: String = ""
     ) {
         viewModelScope.launch {
-            repository.insertExpense(
-                ExpenseEntity(
-                    title = title.trim(),
-                    amount = amount,
-                    category = category,
-                    paymentMethod = paymentMethod,
-                    date = date,
-                    notes = notes.trim(),
-                    tag = tag,
-                    receiptUri = receiptUri,
-                    bankName = bankName.trim(),
-                    creditCardName = creditCardName.trim(),
-                    createdAt = System.currentTimeMillis()
-                )
+            val entity = ExpenseEntity(
+                title = title.trim(),
+                amount = amount,
+                category = category,
+                paymentMethod = paymentMethod,
+                date = date,
+                notes = notes.trim(),
+                tag = tag,
+                receiptUri = receiptUri,
+                bankName = bankName.trim(),
+                creditCardName = creditCardName.trim(),
+                createdAt = System.currentTimeMillis()
             )
+            val newId = repository.insertExpense(entity)
+            if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                val inserted = entity.copy(id = newId)
+                val uploadResult = firestoreSyncRepository.uploadExpense(inserted)
+                if (uploadResult.isSuccess) {
+                    repository.updateExpense(inserted.copy(syncStatus = "SYNCED"))
+                    securityManager.recordSyncSuccess()
+                }
+            }
         }
     }
 
     fun updateExpense(expense: ExpenseEntity) {
         viewModelScope.launch {
             repository.updateExpense(expense)
+            if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                val uploadResult = firestoreSyncRepository.uploadExpense(expense)
+                if (uploadResult.isSuccess) {
+                    repository.updateExpense(expense.copy(syncStatus = "SYNCED"))
+                    securityManager.recordSyncSuccess()
+                }
+            }
         }
     }
 
@@ -2029,6 +2169,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _lastDeletedExpenses.value = listOf(expense)
             repository.deleteExpense(expense)
+            if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                firestoreSyncRepository.deleteExpenseFromCloud(expense)
+            }
         }
     }
 
@@ -2098,6 +2241,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             repository.insertExpenses(entities)
             _statementParseResult.value = null
             _syncMessage.value = "Successfully imported ${transactions.size} transactions to your ledger!"
+            if (firestoreSyncRepository.isUserSignedIn() && securityManager.isAutoSyncEnabled()) {
+                syncFirestoreTransactions(silent = true)
+            }
         }
     }
 
@@ -2194,6 +2340,68 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             } finally {
                 _isAiLoading.value = false
             }
+        }
+    }
+
+    // Google Drive Encrypted Backup
+    fun backupToGoogleDrive(
+        customPassword: String? = null,
+        onFilePrepared: (File) -> Unit
+    ) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            try {
+                val json = repository.exportEncryptedJson()
+                val encFile = GoogleDriveBackupManager.createDriveBackupFile(
+                    context = getApplication(),
+                    jsonPayload = json,
+                    customPassword = customPassword
+                )
+                val count = allExpenses.value.size
+                val userEmail = securityManager.googleUserEmail.value ?: currentUser.value?.email ?: "Google Account"
+                repository.addSyncLog(
+                    action = "GOOGLE_DRIVE_BACKUP",
+                    count = count,
+                    status = "SUCCESS",
+                    email = userEmail,
+                    details = "Prepared encrypted database backup for Google Drive (${encFile.name})"
+                )
+                securityManager.recordSyncSuccess()
+                _syncMessage.value = "Backup prepared for Google Drive: ${encFile.name}"
+                onFilePrepared(encFile)
+            } catch (e: Exception) {
+                _syncMessage.value = "Google Drive backup error: ${e.message}"
+            } finally {
+                _isAiLoading.value = false
+            }
+        }
+    }
+
+    fun saveDriveBackupToSafUri(
+        targetUri: Uri,
+        backupFile: File,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val (success, message) = GoogleDriveBackupManager.writeBackupToSafUri(
+                context = getApplication(),
+                targetUri = targetUri,
+                backupFile = backupFile
+            )
+            if (success) {
+                val count = allExpenses.value.size
+                val userEmail = securityManager.googleUserEmail.value ?: currentUser.value?.email ?: "Google Account"
+                repository.addSyncLog(
+                    action = "GOOGLE_DRIVE_SAF_SAVE",
+                    count = count,
+                    status = "SUCCESS",
+                    email = userEmail,
+                    details = "Saved encrypted backup file directly to Google Drive document"
+                )
+                securityManager.recordSyncSuccess()
+                _syncMessage.value = "Successfully saved backup to Google Drive!"
+            }
+            onComplete(success, message)
         }
     }
 
@@ -2487,6 +2695,23 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 cal.set(Calendar.MILLISECOND, 0)
                 Pair(cal.timeInMillis, end)
             }
+            DateFilterType.PREVIOUS_MONTH -> {
+                val prevCal = Calendar.getInstance()
+                prevCal.add(Calendar.MONTH, -1)
+                prevCal.set(Calendar.DAY_OF_MONTH, 1)
+                prevCal.set(Calendar.HOUR_OF_DAY, 0)
+                prevCal.set(Calendar.MINUTE, 0)
+                prevCal.set(Calendar.SECOND, 0)
+                prevCal.set(Calendar.MILLISECOND, 0)
+                val pStart = prevCal.timeInMillis
+                prevCal.set(Calendar.DAY_OF_MONTH, prevCal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                prevCal.set(Calendar.HOUR_OF_DAY, 23)
+                prevCal.set(Calendar.MINUTE, 59)
+                prevCal.set(Calendar.SECOND, 59)
+                prevCal.set(Calendar.MILLISECOND, 999)
+                val pEnd = prevCal.timeInMillis
+                Pair(pStart, pEnd)
+            }
             DateFilterType.TODAY -> {
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
@@ -2506,7 +2731,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 val yEnd = cal.timeInMillis
                 Pair(yStart, yEnd)
             }
-            DateFilterType.LAST_7_DAYS -> {
+            DateFilterType.THIS_WEEK -> {
                 cal.add(Calendar.DAY_OF_YEAR, -7)
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
@@ -2520,5 +2745,80 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 custom ?: Pair(0L, end)
             }
         }
+    }
+
+    /**
+     * Exports a shareable monthly financial PDF report containing visual charts (vector donut and bar charts),
+     * KPI cards, category budget adherence, and transaction summaries.
+     */
+    fun exportMonthlyVisualPdfReport(year: Int, month: Int): File {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val startMillis = cal.timeInMillis
+        val endCal = (cal.clone() as Calendar).apply {
+            set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val endMillis = endCal.timeInMillis
+        val monthTxs = allExpenses.value.filter { it.date in startMillis..endMillis }
+        return com.example.export.ReportExportManager.generateMonthlyFinancialSummaryWithChartsPdf(
+            context = getApplication(),
+            expenses = monthTxs,
+            budgets = allBudgets.value,
+            year = year,
+            month = month
+        )
+    }
+
+    /**
+     * Selects and filters the transactions ledger to a specific historical or current month.
+     */
+    fun selectMonthForLedger(year: Int, month: Int) {
+        val now = Calendar.getInstance()
+        val curYear = now.get(Calendar.YEAR)
+        val curMonth = now.get(Calendar.MONTH) + 1
+        val prevC = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+        val prevYear = prevC.get(Calendar.YEAR)
+        val prevMonth = prevC.get(Calendar.MONTH) + 1
+
+        if (year == curYear && month == curMonth) {
+            setDateFilter(DateFilterType.THIS_MONTH)
+            setCustomDateRange(null)
+            return
+        }
+        if (year == prevYear && month == prevMonth) {
+            setDateFilter(DateFilterType.PREVIOUS_MONTH)
+            setCustomDateRange(null)
+            return
+        }
+
+        val startCal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val endCal = (startCal.clone() as Calendar).apply {
+            set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        setCustomDateRange(Pair(startCal.timeInMillis, endCal.timeInMillis))
+        setDateFilter(DateFilterType.CUSTOM)
     }
 }

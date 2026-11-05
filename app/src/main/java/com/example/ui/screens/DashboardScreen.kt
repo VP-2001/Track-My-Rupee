@@ -90,6 +90,7 @@ import com.example.ui.components.RechartsBudgetTrendDashboard
 import com.example.ui.components.RechartsCategoryBudgetDashboard
 import com.example.ui.components.RechartsDailyTrendAndCategoryDashboard
 import com.example.ui.components.RechartsMonthlyTrendLineChart
+import com.example.ui.components.RechartsSpendingInsightsDashboard
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.SophisticatedDarkBackground
 import com.example.ui.theme.SophisticatedDarkBorder
@@ -684,6 +685,20 @@ fun DashboardScreen(
                 budgetProgress = budgetProgress,
                 onNavigateToBudgets = onNavigateToBudgets,
                 onCategoryClick = { cat ->
+                    viewModel.filterByCategory(cat)
+                    onNavigateToTransactions()
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
+
+        // 3c. Interactive Spending Insights Dashboard (D3 & Recharts Category Breakdown)
+        item {
+            RechartsSpendingInsightsDashboard(
+                allExpenses = allExpenses,
+                availableMonths = availableMonths,
+                onNavigateToTransactions = onNavigateToTransactions,
+                onFilterCategoryInLedger = { cat ->
                     viewModel.filterByCategory(cat)
                     onNavigateToTransactions()
                 },

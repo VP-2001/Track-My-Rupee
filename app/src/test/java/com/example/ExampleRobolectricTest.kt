@@ -611,6 +611,27 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `securityManager manages biometric configuration and prompt status properly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val securityManager = com.example.security.SecurityAndSyncManager(context)
+
+    assertTrue("Biometric unlock should be enabled by default", securityManager.isBiometricEnabled())
+
+    // Toggle off
+    securityManager.setBiometricEnabled(false)
+    org.junit.Assert.assertFalse("Biometrics should be disabled", securityManager.isBiometricEnabled())
+    org.junit.Assert.assertFalse("canUseBiometrics should return false when disabled", securityManager.canUseBiometrics())
+
+    // Re-enable
+    securityManager.setBiometricEnabled(true)
+    assertTrue("Biometrics re-enabled", securityManager.isBiometricEnabled())
+
+    // Verify status description is non-empty
+    val desc = securityManager.getBiometricStatusDescription()
+    assertTrue("Description must be descriptive", desc.isNotEmpty())
+  }
+
+  @Test
   fun `aiChatCompletion offline advisor consumes Room DB context with category summaries and expenses`() = kotlinx.coroutines.runBlocking {
     val service = com.example.ai.GeminiAiService()
     val mockContext = """
@@ -1467,7 +1488,109 @@ class ExampleRobolectricTest {
     assertNotNull(activity)
     assertNotNull(activity.findViewById(android.R.id.content))
   }
+
+  @Test
+  fun `Spending Insights calculates category breakdowns and percentages accurately for monthly expenses`() {
+    val sampleExpenses = listOf(
+      ExpenseEntity(id = 1, title = "Supermarket", amount = 3000.0, category = "Food & Dining", date = 1000L),
+      ExpenseEntity(id = 2, title = "Restaurant", amount = 1000.0, category = "Food & Dining", date = 2000L),
+      ExpenseEntity(id = 3, title = "Metro Rail", amount = 1000.0, category = "Transportation", date = 3000L),
+      ExpenseEntity(id = 4, title = "Movie Tickets", amount = 1000.0, category = "Entertainment", date = 4000L)
+    )
+
+    val total = sampleExpenses.sumOf { it.amount }
+    assertEquals(6000.0, total, 0.001)
+
+    val summaries = sampleExpenses.groupBy { it.category }
+      .map { (cat, list) ->
+        val sum = list.sumOf { it.amount }
+        val pct = ((sum / total) * 100).toFloat()
+        com.example.data.model.CategorySummary(
+          category = cat,
+          totalAmount = sum,
+          transactionCount = list.size,
+          percentage = pct
+        )
+      }
+      .sortedByDescending { it.totalAmount }
+
+    assertEquals(3, summaries.size)
+    assertEquals("Food & Dining", summaries[0].category)
+    assertEquals(4000.0, summaries[0].totalAmount, 0.001)
+    assertEquals(2, summaries[0].transactionCount)
+    assertEquals(66.66f, summaries[0].percentage, 0.5f)
+
+    assertEquals("Transportation", summaries[1].category)
+    assertEquals(1000.0, summaries[1].totalAmount, 0.001)
+    assertEquals(16.66f, summaries[1].percentage, 0.5f)
+
+    assertEquals("Entertainment", summaries[2].category)
+    assertEquals(1000.0, summaries[2].totalAmount, 0.001)
+    assertEquals(16.66f, summaries[2].percentage, 0.5f)
+  }
+
+  @Test
+  fun `generateMonthlyFinancialSummaryWithChartsPdf creates valid multi-page PDF file with charts`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val sampleExpenses = listOf(
+      ExpenseEntity(id = 1, title = "Supermarket", amount = 3000.0, category = "Food & Dining", date = System.currentTimeMillis()),
+      ExpenseEntity(id = 2, title = "Electricity Bill", amount = 2000.0, category = "Utilities", date = System.currentTimeMillis())
+    )
+    val sampleBudgets = listOf(
+      BudgetEntity(category = "Food & Dining", monthlyLimit = 5000.0)
+    )
+
+    val cal = Calendar.getInstance()
+    val pdfFile = ReportExportManager.generateMonthlyFinancialSummaryWithChartsPdf(
+      context = context,
+      expenses = sampleExpenses,
+      budgets = sampleBudgets,
+      year = cal.get(Calendar.YEAR),
+      month = cal.get(Calendar.MONTH) + 1
+    )
+
+    assertNotNull(pdfFile)
+    assertTrue("PDF file should exist", pdfFile.exists())
+    assertTrue("PDF file size should be > 0", pdfFile.length() > 0)
+    assertTrue("PDF file name should end with .pdf", pdfFile.name.endsWith(".pdf"))
+  }
+
+  @Test
+  fun `DateFilterType enum entries match user requested ordering`() {
+    val labels = com.example.ui.viewmodel.DateFilterType.entries.map { it.label }
+    assertEquals(
+      listOf("Today", "Yesterday", "This Week", "This Month", "Previous Month", "All", "Custom"),
+      labels
+    )
+  }
+
+  @Test
+  fun `selectMonthForLedger updates dateFilter and dateRange appropriately`() {
+    val application = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val vm = com.example.ui.viewmodel.ExpenseViewModel(application)
+
+    val now = Calendar.getInstance()
+    val curYear = now.get(Calendar.YEAR)
+    val curMonth = now.get(Calendar.MONTH) + 1
+
+    // Selecting current month sets DateFilterType.THIS_MONTH
+    vm.selectMonthForLedger(curYear, curMonth)
+    assertEquals(com.example.ui.viewmodel.DateFilterType.THIS_MONTH, vm.dateFilter.value)
+    org.junit.Assert.assertNull(vm.customDateRange.value)
+
+    // Selecting previous month sets DateFilterType.PREVIOUS_MONTH
+    val prevCal = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+    vm.selectMonthForLedger(prevCal.get(Calendar.YEAR), prevCal.get(Calendar.MONTH) + 1)
+    assertEquals(com.example.ui.viewmodel.DateFilterType.PREVIOUS_MONTH, vm.dateFilter.value)
+    org.junit.Assert.assertNull(vm.customDateRange.value)
+
+    // Selecting historical month sets DateFilterType.CUSTOM with appropriate range
+    vm.selectMonthForLedger(2025, 5)
+    assertEquals(com.example.ui.viewmodel.DateFilterType.CUSTOM, vm.dateFilter.value)
+    assertNotNull(vm.customDateRange.value)
+  }
 }
+
 
 
 

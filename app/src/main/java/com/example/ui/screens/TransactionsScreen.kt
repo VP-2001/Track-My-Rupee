@@ -22,16 +22,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
@@ -876,6 +884,278 @@ fun TransactionsScreen(
                             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
                         )
                     )
+                }
+            }
+
+            // Month Switcher for viewing previous months
+            val availableMonths by viewModel.availableMonths.collectAsStateWithLifecycle()
+            var showMonthPickerDropdown by remember { mutableStateOf(false) }
+
+            val periodLabel = remember(dateFilter, customRange) {
+                when (dateFilter) {
+                    DateFilterType.TODAY -> "Today (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date())})"
+                    DateFilterType.YESTERDAY -> {
+                        val c = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+                        "Yesterday (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(c.time)})"
+                    }
+                    DateFilterType.THIS_WEEK -> "This Week"
+                    DateFilterType.THIS_MONTH -> SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date())
+                    DateFilterType.PREVIOUS_MONTH -> {
+                        val c = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                        SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(c.time)
+                    }
+                    DateFilterType.ALL_TIME -> "All Transactions (Filter by Month)"
+                    DateFilterType.CUSTOM -> {
+                        if (customRange != null) {
+                            val sdfMonth = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                            val sdfDay = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+                            val cStart = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
+                            val cEnd = Calendar.getInstance().apply { timeInMillis = customRange!!.second }
+                            if (cStart.get(Calendar.DAY_OF_MONTH) == 1 &&
+                                cEnd.get(Calendar.DAY_OF_MONTH) == cEnd.getActualMaximum(Calendar.DAY_OF_MONTH) &&
+                                cStart.get(Calendar.MONTH) == cEnd.get(Calendar.MONTH) &&
+                                cStart.get(Calendar.YEAR) == cEnd.get(Calendar.YEAR)) {
+                                sdfMonth.format(cStart.time)
+                            } else {
+                                "${sdfDay.format(Date(customRange!!.first))} - ${sdfDay.format(Date(customRange!!.second))}"
+                            }
+                        } else "Custom Date Range"
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showMonthPickerDropdown = true }
+                        .testTag("month_dropdown_selector")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = "Month Dropdown List",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "SELECT MONTH / PERIOD",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = periodLabel,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Open month dropdown list",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showMonthPickerDropdown,
+                    onDismissRequest = { showMonthPickerDropdown = false },
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f)
+                        .testTag("month_dropdown_menu")
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "This Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date())})",
+                                    fontWeight = if (dateFilter == DateFilterType.THIS_MONTH) FontWeight.Bold else FontWeight.Normal
+                                )
+                                if (dateFilter == DateFilterType.THIS_MONTH) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        onClick = {
+                            viewModel.setDateFilter(DateFilterType.THIS_MONTH)
+                            viewModel.setCustomDateRange(null)
+                            showMonthPickerDropdown = false
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            val prevC = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Previous Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(prevC.time)})",
+                                    fontWeight = if (dateFilter == DateFilterType.PREVIOUS_MONTH) FontWeight.Bold else FontWeight.Normal
+                                )
+                                if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                        },
+                        onClick = {
+                            viewModel.setDateFilter(DateFilterType.PREVIOUS_MONTH)
+                            viewModel.setCustomDateRange(null)
+                            showMonthPickerDropdown = false
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "All Transactions (All Time)",
+                                    fontWeight = if (dateFilter == DateFilterType.ALL_TIME) FontWeight.Bold else FontWeight.Normal
+                                )
+                                if (dateFilter == DateFilterType.ALL_TIME) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+                        },
+                        onClick = {
+                            viewModel.setDateFilter(DateFilterType.ALL_TIME)
+                            viewModel.setCustomDateRange(null)
+                            showMonthPickerDropdown = false
+                        }
+                    )
+
+                    if (availableMonths.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = "RECORDED MONTHS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
+                        availableMonths.take(18).forEach { availMonth ->
+                            val isSelected = remember(dateFilter, customRange, availMonth) {
+                                if (dateFilter == DateFilterType.THIS_MONTH) {
+                                    val now = Calendar.getInstance()
+                                    now.get(Calendar.YEAR) == availMonth.year && (now.get(Calendar.MONTH) + 1) == availMonth.month
+                                } else if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
+                                    val prev = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                                    prev.get(Calendar.YEAR) == availMonth.year && (prev.get(Calendar.MONTH) + 1) == availMonth.month
+                                } else if (dateFilter == DateFilterType.CUSTOM && customRange != null) {
+                                    val cal = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
+                                    cal.get(Calendar.YEAR) == availMonth.year && (cal.get(Calendar.MONTH) + 1) == availMonth.month
+                                } else false
+                            }
+
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            availMonth.label,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                "${availMonth.count} txns • ${ExpenseEntity.formatInr(availMonth.totalSpent)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (isSelected) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = "Selected",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                onClick = {
+                                    viewModel.selectMonthForLedger(availMonth.year, availMonth.month)
+                                    showMonthPickerDropdown = false
+                                }
+                            )
+                        }
+                    }
                 }
             }
 

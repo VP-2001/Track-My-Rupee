@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Lock
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TableChart
+import com.example.security.GoogleDriveBackupManager
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -99,6 +101,26 @@ fun LocalBackupRestoreCard(
 
     var showCsvBackupDialog by remember { mutableStateOf(false) }
     var csvBackupResultSheet by remember { mutableStateOf<File?>(null) }
+
+    var showGoogleDriveBackupDialog by remember { mutableStateOf(false) }
+    var useDrivePasswordProtection by remember { mutableStateOf(false) }
+    var driveBackupPassword by remember { mutableStateOf("") }
+    var driveBackupFileToSave by remember { mutableStateOf<File?>(null) }
+    var driveBackupResultSheet by remember { mutableStateOf<File?>(null) }
+
+    // Google Drive SAF Document Creator launcher
+    val driveSafLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        uri?.let { targetUri ->
+            val file = driveBackupFileToSave
+            if (file != null && file.exists()) {
+                viewModel.saveDriveBackupToSafUri(targetUri, file) { success, msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     // File picker using OpenDocument contract to reliably pick .enc files
     val restoreFilePickerLauncher = rememberLauncherForActivityResult(
@@ -285,6 +307,95 @@ fun LocalBackupRestoreCard(
                     Icon(Icons.Default.FileOpen, contentDescription = "Restore File", modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Restore File", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+            }
+
+            // 2b. Backup to Google Drive Feature
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = SophisticatedDarkSurfaceDim,
+                border = BorderStroke(1.dp, SophisticatedPrimary.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showGoogleDriveBackupDialog = true }
+                    .testTag("backup_to_google_drive_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(SophisticatedPrimary.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.CloudUpload,
+                                contentDescription = "Google Drive Backup",
+                                tint = SophisticatedPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Backup to Google Drive",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SophisticatedDarkOnSurface
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = SophisticatedPrimaryContainer
+                                ) {
+                                    Text(
+                                        text = "Cloud Drive",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SophisticatedOnPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Export AES-256 encrypted ledger directly to Google Drive",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = SophisticatedPrimary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = "DRIVE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedPrimary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Backup to Drive",
+                            tint = SophisticatedPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -835,6 +946,234 @@ fun LocalBackupRestoreCard(
                         modifier = Modifier
                             .weight(0.7f)
                             .height(48.dp)
+                    ) {
+                        Text("Done")
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Google Drive Backup Dialog
+    if (showGoogleDriveBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { showGoogleDriveBackupDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CloudUpload, contentDescription = null, tint = SophisticatedPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Backup to Google Drive", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Create an AES-256 encrypted snapshot (.enc) of all ${allExpenses.size} transactions and save or upload it to your Google Drive account.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SophisticatedDarkOnSurface
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = SophisticatedDarkSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Custom Passphrase",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = SophisticatedDarkOnSurface
+                                    )
+                                    Text(
+                                        text = "Optional extra password for cross-device restore",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SophisticatedDarkOnSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = useDrivePasswordProtection,
+                                    onCheckedChange = { useDrivePasswordProtection = it },
+                                    modifier = Modifier.testTag("drive_passphrase_switch")
+                                )
+                            }
+
+                            if (useDrivePasswordProtection) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = driveBackupPassword,
+                                    onValueChange = { driveBackupPassword = it },
+                                    label = { Text("Backup Passphrase") },
+                                    placeholder = { Text("Enter a strong passphrase") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("drive_passphrase_input")
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val pass = if (useDrivePasswordProtection && driveBackupPassword.isNotBlank()) driveBackupPassword else null
+                        viewModel.backupToGoogleDrive(pass) { file ->
+                            Toast.makeText(context, "Encrypted backup created: ${file.name}", Toast.LENGTH_LONG).show()
+                            if (file.exists()) {
+                                driveBackupFileToSave = file
+                                driveBackupResultSheet = file
+                            }
+                        }
+                        showGoogleDriveBackupDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SophisticatedPrimary, contentColor = Color.Black),
+                    modifier = Modifier.testTag("confirm_drive_backup_btn")
+                ) {
+                    Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Prepare Backup")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGoogleDriveBackupDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Google Drive Backup Result Sheet (Direct Upload or Choose Folder via SAF)
+    if (driveBackupResultSheet != null) {
+        val file = driveBackupResultSheet!!
+        ModalBottomSheet(
+            onDismissRequest = { driveBackupResultSheet = null },
+            containerColor = SophisticatedDarkSurfaceDim,
+            dragHandle = null
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+                    .testTag("google_drive_backup_sheet")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = SophisticatedPrimary.copy(alpha = 0.18f),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.CloudUpload,
+                                    contentDescription = null,
+                                    tint = SophisticatedPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Google Drive Backup Ready",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedDarkOnSurface
+                            )
+                            Text(
+                                text = "Encrypted Ledger Snapshot (.enc)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = SophisticatedDarkSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = file.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SophisticatedDarkOnSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Size: ${file.length() / 1024 + 1} KB • Total Records: ${allExpenses.size} items",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SophisticatedDarkOnSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Primary Drive Actions
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Action 1: Upload via Google Drive App (Direct Intent)
+                    Button(
+                        onClick = {
+                            GoogleDriveBackupManager.uploadFileToGoogleDriveApp(context, file)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("upload_to_drive_app_btn"),
+                        colors = ButtonDefaults.buttonColors(containerColor = SophisticatedPrimary, contentColor = Color.Black)
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = "Upload", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Upload to Google Drive App", fontWeight = FontWeight.Bold)
+                    }
+
+                    // Action 2: Choose Google Drive Folder (Storage Access Framework)
+                    OutlinedButton(
+                        onClick = {
+                            driveSafLauncher.launch(file.name)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("save_to_drive_folder_btn"),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SophisticatedDarkOnSurface),
+                        border = BorderStroke(1.dp, SophisticatedPrimary.copy(alpha = 0.5f))
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = "Folder", modifier = Modifier.size(18.dp), tint = SophisticatedPrimary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Save to Drive Folder / Storage", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    // Action 3: Done
+                    OutlinedButton(
+                        onClick = { driveBackupResultSheet = null },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SophisticatedDarkOnSurfaceVariant),
+                        border = BorderStroke(1.dp, SophisticatedDarkBorder)
                     ) {
                         Text("Done")
                     }

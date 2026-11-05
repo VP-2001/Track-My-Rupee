@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for integrating Firebase Authentication and Google Sign-In with Jetpack Credential Manager into Track My Rupee, featuring an optional sign-in flow, top app bar profile avatar, M3 Account Bottom Sheet displaying profile photo and display name, sign-out controls, and seamless local ledger linking.",
-  "updatedAt":  "2026-10-25T10:42:56.418732238Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Implementation plan to export monthly financial summaries and visual charts into a shareable PDF report, add a combined month dropdown switcher with previous/next steppers to the transactions ledger, and rearrange date filter chips to Today, Yesterday, This Week, This Month, Previous Month, All, and Custom.",
+  "updatedAt": "2026-11-04T15:35:48.921514559Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

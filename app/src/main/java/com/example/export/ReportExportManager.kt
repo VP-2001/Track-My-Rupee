@@ -309,6 +309,315 @@ object ReportExportManager {
         )
     }
 
+    /**
+     * Generates a high-quality multi-page PDF report containing monthly financial KPIs,
+     * visual charts (vector Pie/Donut Chart and ranked Category Bar Chart), category budget adherence,
+     * and itemized transaction tables.
+     */
+    fun generateMonthlyFinancialSummaryWithChartsPdf(
+        context: Context,
+        expenses: List<ExpenseEntity>,
+        budgets: List<BudgetEntity>,
+        year: Int,
+        month: Int
+    ): File {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        val monthName = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(cal.time)
+        val monthShort = SimpleDateFormat("MMM_yyyy", Locale.getDefault()).format(cal.time)
+        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+
+        val outputFile = File(context.cacheDir, "Monthly_Summary_Charts_${monthShort}_${System.currentTimeMillis()}.pdf")
+        val pdfDoc = PdfDocument()
+        val pageWidth = 595 // A4 width
+        val pageHeight = 842 // A4 height
+
+        val totalSpent = expenses.sumOf { it.amount }
+        val categoryGroups = expenses.groupBy { it.category }
+            .mapValues { it.value.sumOf { exp -> exp.amount } }
+            .toList()
+            .sortedByDescending { it.second }
+
+        val topCategory = categoryGroups.firstOrNull()?.first ?: "None"
+        val topCategoryAmt = categoryGroups.firstOrNull()?.second ?: 0.0
+        val topCategoryPct = if (totalSpent > 0) ((topCategoryAmt / totalSpent) * 100).toInt() else 0
+        val dailyAvg = if (daysInMonth > 0) totalSpent / daysInMonth else 0.0
+
+        val palette = listOf(
+            Color.parseColor("#0D9488"), // Emerald Teal
+            Color.parseColor("#6366F1"), // Indigo
+            Color.parseColor("#F59E0B"), // Amber
+            Color.parseColor("#EC4899"), // Pink
+            Color.parseColor("#10B981"), // Mint
+            Color.parseColor("#8B5CF6"), // Purple
+            Color.parseColor("#3B82F6"), // Blue
+            Color.parseColor("#EF4444"), // Red
+            Color.parseColor("#14B8A6"), // Cyan
+            Color.parseColor("#F97316")  // Orange
+        )
+
+        try {
+            // ================= PAGE 1: Executive Summary & Visual Charts =================
+            val pageInfo1 = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
+            val page1 = pdfDoc.startPage(pageInfo1)
+            val canvas1 = page1.canvas
+
+            val headerBg = Paint().apply { color = Color.parseColor("#0F172A"); style = Paint.Style.FILL }
+            val bannerTitle = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true; isAntiAlias = true }
+            val bannerSub = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 8f; isAntiAlias = true }
+            val cardBg = Paint().apply { color = Color.parseColor("#F8FAFC"); style = Paint.Style.FILL }
+            val cardBorder = Paint().apply { color = Color.parseColor("#E2E8F0"); style = Paint.Style.STROKE; strokeWidth = 1f }
+            val titlePaint = Paint().apply { color = Color.parseColor("#0F172A"); textSize = 12f; isFakeBoldText = true; isAntiAlias = true }
+            val subTitlePaint = Paint().apply { color = Color.parseColor("#64748B"); textSize = 7.5f; isAntiAlias = true; isFakeBoldText = true }
+            val boldValuePaint = Paint().apply { color = Color.parseColor("#0F172A"); textSize = 10.5f; isFakeBoldText = true; isAntiAlias = true }
+            val textPaint = Paint().apply { color = Color.parseColor("#334155"); textSize = 8.5f; isAntiAlias = true }
+            val linePaint = Paint().apply { color = Color.parseColor("#E2E8F0"); strokeWidth = 0.8f }
+
+            // 1. Header Banner
+            canvas1.drawRoundRect(RectF(30f, 25f, 565f, 85f), 8f, 8f, headerBg)
+            val accentPaint = Paint().apply { color = Color.parseColor("#0D9488"); style = Paint.Style.FILL }
+            canvas1.drawRoundRect(RectF(30f, 25f, 38f, 85f), 4f, 4f, accentPaint)
+            canvas1.drawText("TRACK MY RUPEE — MONTHLY FINANCIAL STATEMENT", 48f, 50f, bannerTitle)
+            canvas1.drawText("Official Financial Summary & Visual Chart Analytics • $monthName • Currency: INR (₹)", 48f, 68f, bannerSub)
+
+            var y = 98f
+
+            // 2. 4 Top KPI Metric Cards (2x2 grid)
+            val cardW = 260f
+            val cardH = 44f
+
+            // KPI 1: Total Spending
+            canvas1.drawRoundRect(RectF(30f, y, 30f + cardW, y + cardH), 6f, 6f, cardBg)
+            canvas1.drawRoundRect(RectF(30f, y, 30f + cardW, y + cardH), 6f, 6f, cardBorder)
+            canvas1.drawText("TOTAL MONTHLY EXPENDITURE", 42f, y + 16f, subTitlePaint)
+            canvas1.drawText(ExpenseEntity.formatInr(totalSpent), 42f, y + 34f, boldValuePaint)
+
+            // KPI 2: Total Recorded Transactions
+            val col2X = 305f
+            canvas1.drawRoundRect(RectF(col2X, y, col2X + cardW, y + cardH), 6f, 6f, cardBg)
+            canvas1.drawRoundRect(RectF(col2X, y, col2X + cardW, y + cardH), 6f, 6f, cardBorder)
+            canvas1.drawText("TOTAL RECORDED TRANSACTIONS", col2X + 12f, y + 16f, subTitlePaint)
+            canvas1.drawText("${expenses.size} recorded entries", col2X + 12f, y + 34f, boldValuePaint)
+
+            y += cardH + 8f
+
+            // KPI 3: Top Category
+            canvas1.drawRoundRect(RectF(30f, y, 30f + cardW, y + cardH), 6f, 6f, cardBg)
+            canvas1.drawRoundRect(RectF(30f, y, 30f + cardW, y + cardH), 6f, 6f, cardBorder)
+            canvas1.drawText("HIGHEST SPENDING CATEGORY", 42f, y + 16f, subTitlePaint)
+            canvas1.drawText("$topCategory ($topCategoryPct%)", 42f, y + 34f, boldValuePaint)
+
+            // KPI 4: Daily Average
+            canvas1.drawRoundRect(RectF(col2X, y, col2X + cardW, y + cardH), 6f, 6f, cardBg)
+            canvas1.drawRoundRect(RectF(col2X, y, col2X + cardW, y + cardH), 6f, 6f, cardBorder)
+            canvas1.drawText("DAILY AVERAGE SPEND RATE", col2X + 12f, y + 16f, subTitlePaint)
+            canvas1.drawText("${ExpenseEntity.formatInr(dailyAvg)} / day", col2X + 12f, y + 34f, boldValuePaint)
+
+            y += cardH + 16f
+
+            // 3. Section Title: Visual Category Distribution (Pie / Donut Chart)
+            canvas1.drawText("1. Category Expense Distribution (Donut Chart)", 30f, y, titlePaint)
+            y += 10f
+
+            val chartBoxH = 175f
+            canvas1.drawRoundRect(RectF(30f, y, 565f, y + chartBoxH), 8f, 8f, cardBg)
+            canvas1.drawRoundRect(RectF(30f, y, 565f, y + chartBoxH), 8f, 8f, cardBorder)
+
+            val centerX = 130f
+            val centerY = y + chartBoxH / 2f
+            val radius = 62f
+            val donutHoleRadius = 36f
+
+            if (totalSpent > 0 && categoryGroups.isNotEmpty()) {
+                var currentAngle = -90f
+                categoryGroups.forEachIndexed { idx, (_, amt) ->
+                    val sweep = ((amt / totalSpent) * 360f).toFloat()
+                    val slicePaint = Paint().apply {
+                        color = palette[idx % palette.size]
+                        style = Paint.Style.STROKE
+                        strokeWidth = (radius - donutHoleRadius)
+                        isAntiAlias = true
+                    }
+                    val arcR = donutHoleRadius + (radius - donutHoleRadius) / 2f
+                    canvas1.drawArc(
+                        RectF(centerX - arcR, centerY - arcR, centerX + arcR, centerY + arcR),
+                        currentAngle,
+                        sweep - if (categoryGroups.size > 1) 1.5f else 0f,
+                        false,
+                        slicePaint
+                    )
+                    currentAngle += sweep
+                }
+
+                // Center Donut text
+                val centerLabelPaint = Paint().apply { color = Color.parseColor("#64748B"); textSize = 7f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; isAntiAlias = true }
+                val centerValPaint = Paint().apply { color = Color.parseColor("#0F172A"); textSize = 8.5f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; isAntiAlias = true }
+                canvas1.drawText("TOTAL", centerX, centerY - 2f, centerLabelPaint)
+                canvas1.drawText(ExpenseEntity.formatInr(totalSpent), centerX, centerY + 10f, centerValPaint)
+
+                // Donut Legend to the right
+                val legendStartX = 230f
+                var legendY = y + 25f
+                categoryGroups.take(8).forEachIndexed { idx, (cat, amt) ->
+                    val color = palette[idx % palette.size]
+                    val pct = ((amt / totalSpent) * 100).toInt()
+                    val dotPaint = Paint().apply { this.color = color; style = Paint.Style.FILL; isAntiAlias = true }
+
+                    canvas1.drawCircle(legendStartX, legendY - 3f, 4f, dotPaint)
+                    canvas1.drawText("${cat.take(18)}: ${ExpenseEntity.formatInr(amt)} ($pct%)", legendStartX + 10f, legendY, textPaint)
+                    legendY += 17f
+                }
+            } else {
+                val emptyPaint = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 10f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
+                canvas1.drawText("No expenses recorded for $monthName", 297f, centerY, emptyPaint)
+            }
+
+            y += chartBoxH + 16f
+
+            // 4. Section Title: Ranked Category Bar Chart
+            canvas1.drawText("2. Ranked Category Breakdown (Bar Chart)", 30f, y, titlePaint)
+            y += 10f
+
+            val barBoxH = 180f
+            canvas1.drawRoundRect(RectF(30f, y, 565f, y + barBoxH), 8f, 8f, cardBg)
+            canvas1.drawRoundRect(RectF(30f, y, 565f, y + barBoxH), 8f, 8f, cardBorder)
+
+            val maxCategoryAmt = categoryGroups.firstOrNull()?.second ?: 1.0
+            val barTrackW = 270f
+            var barY = y + 20f
+
+            categoryGroups.take(6).forEachIndexed { idx, (cat, amt) ->
+                val color = palette[idx % palette.size]
+                val pct = if (totalSpent > 0) ((amt / totalSpent) * 100).toInt() else 0
+                val barFraction = if (maxCategoryAmt > 0) (amt / maxCategoryAmt).toFloat().coerceIn(0.04f, 1f) else 0.04f
+
+                // Label on left
+                canvas1.drawText(cat.take(16), 45f, barY + 6f, boldValuePaint)
+
+                // Track background
+                val trackPaint = Paint().apply { this.color = Color.parseColor("#E2E8F0"); style = Paint.Style.FILL }
+                canvas1.drawRoundRect(RectF(150f, barY - 4f, 150f + barTrackW, barY + 8f), 4f, 4f, trackPaint)
+
+                // Colored progress bar
+                val barFillPaint = Paint().apply { this.color = color; style = Paint.Style.FILL; isAntiAlias = true }
+                canvas1.drawRoundRect(RectF(150f, barY - 4f, 150f + (barTrackW * barFraction), barY + 8f), 4f, 4f, barFillPaint)
+
+                // Value on right
+                canvas1.drawText("${ExpenseEntity.formatInr(amt)} ($pct%)", 150f + barTrackW + 10f, barY + 6f, boldValuePaint)
+
+                barY += 26f
+            }
+
+            // Footer Page 1
+            canvas1.drawText("Page 1 of 2 • Official Monthly Statement generated by Track My Rupee", 30f, pageHeight - 20f, subTitlePaint)
+            pdfDoc.finishPage(page1)
+
+            // ================= PAGE 2: Category Budget Adherence & Top Transactions =================
+            val pageInfo2 = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 2).create()
+            val page2 = pdfDoc.startPage(pageInfo2)
+            val canvas2 = page2.canvas
+
+            // Header Banner Page 2
+            canvas2.drawRoundRect(RectF(30f, 25f, 565f, 70f), 8f, 8f, headerBg)
+            canvas2.drawRoundRect(RectF(30f, 25f, 38f, 70f), 4f, 4f, accentPaint)
+            canvas2.drawText("TRACK MY RUPEE — CATEGORY BUDGETS & TOP TRANSACTIONS", 48f, 50f, bannerTitle)
+
+            var y2 = 88f
+            canvas2.drawText("3. Category Budget Adherence & Limits", 30f, y2, titlePaint)
+            y2 += 10f
+
+            // Table Header
+            val colCat = 35f
+            val colSpent = 200f
+            val colBudget = 320f
+            val colStatus = 430f
+
+            canvas2.drawRect(30f, y2, 565f, y2 + 18f, cardBg)
+            canvas2.drawText("Category", colCat, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Spent (₹)", colSpent, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Budget Limit (₹)", colBudget, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Budget Status", colStatus, y2 + 12f, boldValuePaint)
+            y2 += 24f
+
+            categoryGroups.forEachIndexed { idx, (cat, spent) ->
+                val budget = budgets.firstOrNull { it.category.equals(cat, ignoreCase = true) }?.monthlyLimit ?: 0.0
+                val status = if (budget > 0) {
+                    val pct = (spent / budget) * 100
+                    if (pct > 100) "Over Limit (+${(pct - 100).toInt()}%)" else "${(100 - pct).toInt()}% Remaining"
+                } else "No Budget Defined"
+
+                if (idx % 2 == 0) {
+                    canvas2.drawRect(30f, y2 - 10f, 565f, y2 + 6f, cardBg)
+                }
+
+                canvas2.drawText(cat, colCat, y2, textPaint)
+                canvas2.drawText(ExpenseEntity.formatInr(spent), colSpent, y2, boldValuePaint)
+                canvas2.drawText(if (budget > 0) ExpenseEntity.formatInr(budget) else "—", colBudget, y2, textPaint)
+                canvas2.drawText(status, colStatus, y2, textPaint)
+                canvas2.drawLine(30f, y2 + 6f, 565f, y2 + 6f, linePaint)
+                y2 += 18f
+            }
+
+            y2 += 16f
+            canvas2.drawText("4. Top Recorded Transactions for $monthName", 30f, y2, titlePaint)
+            y2 += 10f
+
+            // Transaction Table Header
+            val colDate = 35f
+            val colTitle = 110f
+            val colCategory = 260f
+            val colMethod = 380f
+            val colAmount = 480f
+
+            canvas2.drawRect(30f, y2, 565f, y2 + 18f, cardBg)
+            canvas2.drawText("Date", colDate, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Description / Merchant", colTitle, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Category", colCategory, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Payment", colMethod, y2 + 12f, boldValuePaint)
+            canvas2.drawText("Amount (₹)", colAmount, y2 + 12f, boldValuePaint)
+            y2 += 22f
+
+            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+            val sortedTxs = expenses.sortedByDescending { it.amount }.take(18)
+
+            for ((idx, item) in sortedTxs.withIndex()) {
+                if (idx % 2 == 0) {
+                    canvas2.drawRect(30f, y2 - 9f, 565f, y2 + 5f, cardBg)
+                }
+                val methodStr = when {
+                    item.creditCardName.isNotBlank() -> item.creditCardName
+                    item.bankName.isNotBlank() -> "${item.paymentMethod} - ${item.bankName}"
+                    else -> item.paymentMethod
+                }
+                canvas2.drawText(sdf.format(Date(item.date)), colDate, y2, textPaint)
+                canvas2.drawText(item.title.take(24), colTitle, y2, textPaint)
+                canvas2.drawText(item.category.take(18), colCategory, y2, textPaint)
+                canvas2.drawText(methodStr.take(16), colMethod, y2, textPaint)
+                canvas2.drawText(ExpenseEntity.formatInr(item.amount), colAmount, y2, boldValuePaint)
+                canvas2.drawLine(30f, y2 + 5f, 565f, y2 + 5f, linePaint)
+                y2 += 16f
+            }
+
+            // Footer Page 2
+            canvas2.drawText("Page 2 of 2 • Official Monthly Statement generated by Track My Rupee", 30f, pageHeight - 20f, subTitlePaint)
+            pdfDoc.finishPage(page2)
+
+            val out = FileOutputStream(outputFile)
+            pdfDoc.writeTo(out)
+            out.flush()
+            out.close()
+            pdfDoc.close()
+        } catch (e: Throwable) {
+            // Graceful fallback for JVM testing where Skia/Pdfium native binaries are absent
+            generateJvmFallbackPdf(outputFile, "Monthly Statement — $monthName", "Official Monthly Summary & Visual Analytics • $monthName", expenses, budgets)
+        }
+
+        return outputFile
+    }
+
     fun generateCsvReport(
         context: Context,
         expenses: List<ExpenseEntity>,

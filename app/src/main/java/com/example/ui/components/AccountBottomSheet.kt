@@ -39,8 +39,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -233,10 +238,17 @@ fun AccountBottomSheet(
                 // LOGGED IN STATE
                 val user = currentUser!!
                 val isCloudSyncing by viewModel.isCloudSyncing.collectAsStateWithLifecycle()
+                val isAutoSyncEnabled by viewModel.securityManager.isAutoSyncEnabled.collectAsStateWithLifecycle()
+                val lastSyncTime by viewModel.securityManager.lastSyncTime.collectAsStateWithLifecycle()
                 LoggedInProfileView(
                     user = user,
                     isAuthenticating = isAuthenticating,
                     isSyncing = isCloudSyncing,
+                    isAutoSyncEnabled = isAutoSyncEnabled,
+                    onToggleAutoSync = { enabled ->
+                        viewModel.securityManager.setAutoSyncEnabled(enabled)
+                    },
+                    lastSyncTime = lastSyncTime,
                     onSyncWithFirestore = { viewModel.syncFirestoreTransactions() },
                     showSignOutConfirmation = showSignOutConfirmation,
                     onShowSignOutConfirm = { showSignOutConfirmation = true },
@@ -273,6 +285,9 @@ private fun LoggedInProfileView(
     user: FirebaseUser,
     isAuthenticating: Boolean,
     isSyncing: Boolean = false,
+    isAutoSyncEnabled: Boolean = true,
+    onToggleAutoSync: (Boolean) -> Unit = {},
+    lastSyncTime: Long = 0L,
     onSyncWithFirestore: () -> Unit = {},
     showSignOutConfirmation: Boolean,
     onShowSignOutConfirm: () -> Unit,
@@ -366,6 +381,121 @@ private fun LoggedInProfileView(
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // Automatic Real-Time Cloud Sync Card
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = SophisticatedDarkSurface,
+            border = BorderStroke(1.dp, if (isAutoSyncEnabled) SophisticatedPrimary.copy(alpha = 0.5f) else SophisticatedDarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Auto Sync",
+                            tint = if (isAutoSyncEnabled) SophisticatedPrimary else SophisticatedDarkOnSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Automatic Cloud Sync",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SophisticatedDarkOnSurface
+                            )
+                            Text(
+                                text = "Continuous real-time multi-device sync",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isAutoSyncEnabled,
+                        onCheckedChange = onToggleAutoSync,
+                        modifier = Modifier.testTag("auto_sync_toggle_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Status Indicator Banner
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isAutoSyncEnabled) SuccessGreen.copy(alpha = 0.12f) else SophisticatedDarkSurfaceDim,
+                    border = BorderStroke(1.dp, if (isAutoSyncEnabled) SuccessGreen.copy(alpha = 0.25f) else SophisticatedDarkBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 2.dp,
+                                color = SophisticatedPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Syncing changes with Firestore...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else if (isAutoSyncEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(SuccessGreen)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Active — auto-syncing in background",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(SophisticatedDarkOnSurfaceVariant)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Paused — manual sync only",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+
+                        if (lastSyncTime > 0) {
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text(
+                                text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(lastSyncTime)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
         // Account Details Card
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -456,7 +586,7 @@ private fun LoggedInProfileView(
             } else {
                 Icon(Icons.Default.Sync, contentDescription = "Sync", modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Sync Ledger with Firestore", fontWeight = FontWeight.Bold)
+                Text("Force Manual Sync", fontWeight = FontWeight.Bold)
             }
         }
 

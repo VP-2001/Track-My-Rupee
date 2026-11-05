@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.app.Activity
 import com.example.util.findActivity
+import com.example.util.findFragmentActivity
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -117,11 +118,13 @@ fun ReportsScreen(
     val securityManager = viewModel.securityManager
     var isLockEnabled by remember { mutableStateOf(securityManager.isLockEnabled()) }
     var isAutoLockOnBackground by remember { mutableStateOf(securityManager.isAutoLockOnBackgroundEnabled()) }
+    var isBiometricEnabled by remember { mutableStateOf(securityManager.isBiometricEnabled()) }
     val googleEmail by securityManager.googleUserEmail.collectAsStateWithLifecycle()
     val lastSyncTime by securityManager.lastSyncTime.collectAsStateWithLifecycle()
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val isAuthenticating by viewModel.isAuthenticating.collectAsStateWithLifecycle()
     val isCloudSyncing by viewModel.isCloudSyncing.collectAsStateWithLifecycle()
+    val isAutoSyncEnabled by securityManager.isAutoSyncEnabled.collectAsStateWithLifecycle()
 
     var showPinSetupDialog by remember { mutableStateOf(false) }
     var newPinText by remember { mutableStateOf("") }
@@ -639,6 +642,73 @@ fun ReportsScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        // Biometric Unlock on Launch Switch
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "BiometricPrompt on Launch",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurface
+                                )
+                                Text(
+                                    "Automatically request Fingerprint or Face upon opening app",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isBiometricEnabled,
+                                onCheckedChange = { enabled ->
+                                    isBiometricEnabled = enabled
+                                    securityManager.setBiometricEnabled(enabled)
+                                },
+                                modifier = Modifier.testTag("biometric_launch_switch")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Test BiometricPrompt Button
+                        OutlinedButton(
+                            onClick = {
+                                val fragmentActivity = context.findFragmentActivity() ?: (context as? androidx.fragment.app.FragmentActivity)
+                                if (fragmentActivity != null) {
+                                    if (securityManager.canUseBiometrics()) {
+                                        securityManager.authenticateWithBiometrics(
+                                            activity = fragmentActivity,
+                                            onSuccess = {
+                                                Toast.makeText(context, "Biometric authentication verified successfully!", Toast.LENGTH_SHORT).show()
+                                            },
+                                            onError = { err ->
+                                                Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+                                    } else {
+                                        Toast.makeText(context, securityManager.getBiometricStatusDescription(), Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("test_biometric_prompt_button")
+                        ) {
+                            Icon(
+                                Icons.Default.Fingerprint,
+                                contentDescription = null,
+                                tint = com.example.ui.theme.SophisticatedPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Test BiometricPrompt Dialog")
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -861,6 +931,118 @@ fun ReportsScreen(
                                     modifier = Modifier.testTag("reports_sign_out_button")
                                 ) {
                                     Text("Sign Out")
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Auto Sync Setting & Live Status
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = com.example.ui.theme.SophisticatedDarkSurface,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isAutoSyncEnabled) com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.4f) else com.example.ui.theme.SophisticatedDarkBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.CloudSync,
+                                        contentDescription = "Automatic Sync",
+                                        tint = if (isAutoSyncEnabled) com.example.ui.theme.SophisticatedPrimary else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            "Automatic Cloud Sync",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = com.example.ui.theme.SophisticatedDarkOnSurface
+                                        )
+                                        Text(
+                                            "Real-time bidirectional synchronization with Firestore",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = isAutoSyncEnabled,
+                                    onCheckedChange = { enabled ->
+                                        securityManager.setAutoSyncEnabled(enabled)
+                                    },
+                                    modifier = Modifier.testTag("reports_auto_sync_switch")
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isCloudSyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 2.dp,
+                                        color = com.example.ui.theme.SophisticatedPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Syncing in background...",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.SophisticatedPrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                } else if (isAutoSyncEnabled && isUserLoggedIn) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(com.example.ui.theme.SuccessGreen)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Active — listening for multi-device changes",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.SuccessGreen,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(com.example.ui.theme.SophisticatedDarkOnSurfaceVariant)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        if (!isUserLoggedIn) "Sign in with Google to enable automatic cloud sync" else "Paused — manual sync only",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                    )
+                                }
+
+                                if (lastSyncTime > 0) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Text(
+                                        "Last synced: " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(lastSyncTime)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                                    )
                                 }
                             }
                         }

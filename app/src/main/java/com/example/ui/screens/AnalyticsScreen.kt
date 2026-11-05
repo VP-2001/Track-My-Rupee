@@ -66,6 +66,7 @@ import com.example.ui.components.InteractiveRadarChart
 import com.example.ui.components.MonthlyComparisonView
 import com.example.ui.components.MonthlySpendingHabitsBottomSheet
 import com.example.ui.components.RechartsCategoryBudgetDashboard
+import com.example.ui.components.RechartsSpendingInsightsDashboard
 import com.example.ui.viewmodel.DateFilterType
 import com.example.ui.viewmodel.ExpenseViewModel
 
@@ -80,7 +81,8 @@ enum class ChartViewType(val label: String, val icon: ImageVector) {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
-    viewModel: ExpenseViewModel
+    viewModel: ExpenseViewModel,
+    onNavigateToTransactions: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val categorySummaries by viewModel.categorySummaries.collectAsStateWithLifecycle()
@@ -93,7 +95,8 @@ fun AnalyticsScreen(
     val selectedComparisonView by viewModel.selectedComparisonView.collectAsStateWithLifecycle()
     val categoryBudgetReport by viewModel.categoryBudgetReport.collectAsStateWithLifecycle()
     val categoryMultiMonthTrends by viewModel.categoryMultiMonthTrends.collectAsStateWithLifecycle()
-    val availableMonths = remember(filteredExpenses) { viewModel.getAvailableMonths() }
+    val allExpenses by viewModel.allExpenses.collectAsStateWithLifecycle(emptyList())
+    val availableMonths = remember(filteredExpenses, allExpenses) { viewModel.getAvailableMonths() }
 
     var activeAnalyticsTab by remember { mutableIntStateOf(0) }
     var selectedChartView by remember { mutableStateOf(ChartViewType.DONUT) }
@@ -160,12 +163,14 @@ fun AnalyticsScreen(
 
                     Button(
                         onClick = {
-                            val pdf = viewModel.exportPdfReport()
-                            ReportExportManager.shareFile(context, pdf, "application/pdf", "Expense Report PDF")
+                            val cal = java.util.Calendar.getInstance()
+                            val pdf = viewModel.exportMonthlyVisualPdfReport(cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1)
+                            ReportExportManager.shareFile(context, pdf, "application/pdf", "Monthly Expense Report & Visual Charts")
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
                         shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("analytics_export_visual_pdf_button")
                     ) {
                         Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -192,8 +197,9 @@ fun AnalyticsScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
+                        Triple("Insights", Icons.Default.Insights, "tab_spending_insights"),
                         Triple("Overview", Icons.Default.PieChart, "tab_overview_charts"),
-                        Triple("Category Budgets", Icons.Default.BarChart, "tab_category_budgets"),
+                        Triple("Budgets", Icons.Default.BarChart, "tab_category_budgets"),
                         Triple("Comparison", Icons.Default.CalendarMonth, "tab_monthly_comparison")
                     ).forEachIndexed { index, (title, icon, testTag) ->
                         val isSelected = activeAnalyticsTab == index
@@ -215,7 +221,7 @@ fun AnalyticsScreen(
                                     imageVector = icon,
                                     contentDescription = null,
                                     tint = if (isSelected) Color(0xFF1E1035) else com.example.ui.theme.SophisticatedDarkOnSurfaceVariant,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = title,
@@ -232,7 +238,18 @@ fun AnalyticsScreen(
             Spacer(modifier = Modifier.height(4.dp))
         }
 
-        if (activeAnalyticsTab == 1) {
+        if (activeAnalyticsTab == 0) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    RechartsSpendingInsightsDashboard(
+                        allExpenses = allExpenses,
+                        availableMonths = availableMonths,
+                        onNavigateToTransactions = onNavigateToTransactions,
+                        onFilterCategoryInLedger = { cat -> viewModel.filterByCategory(cat) }
+                    )
+                }
+            }
+        } else if (activeAnalyticsTab == 2) {
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     RechartsCategoryBudgetDashboard(
@@ -245,7 +262,7 @@ fun AnalyticsScreen(
                     )
                 }
             }
-        } else if (activeAnalyticsTab == 2) {
+        } else if (activeAnalyticsTab == 3) {
             item {
                 MonthlyComparisonView(
                     report = monthlyComparisonReport,
