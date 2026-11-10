@@ -198,7 +198,7 @@ fun MonthlyAiSpendingReportCard(
                             ) {
                                 Text(
                                     text = "Gemini 3.8",
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = SophisticatedPrimary,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -344,7 +344,7 @@ fun MonthlyAiSpendingReportCard(
                                 text = "Evaluating ${state.monthName} category velocity, recurring bills, and budget discipline",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SophisticatedDarkOnSurfaceVariant,
-                                fontSize = 11.sp
+                                fontSize = 12.sp
                             )
                         }
                     }
@@ -570,7 +570,7 @@ private fun ReportSuccessContent(
                     ) {
                         Text(
                             text = report.spendingHabitRatingLabel,
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = SophisticatedPrimary,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -605,7 +605,7 @@ private fun ReportSuccessContent(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = report.previousMonthComparisonText,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = if (report.previousMonthComparisonText.contains("saved", ignoreCase = true)) SuccessGreen else SophisticatedDarkOnSurfaceVariant,
                         fontWeight = FontWeight.Medium,
                         maxLines = 2

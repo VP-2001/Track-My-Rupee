@@ -391,7 +391,7 @@ fun VoiceExpenseDialog(
                             Text(
                                 text = sample,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 color = SophisticatedDarkOnSurface,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                             )

@@ -7,18 +7,21 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -99,6 +102,23 @@ import com.example.ui.components.EditCardSuggestionsDialog
 import com.example.ui.components.ExportDateReportDialog
 import com.example.ui.components.ExportTransactionsDialog
 import com.example.ui.components.MonthlyExpenseReportDialog
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import android.content.Intent
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Share
 import android.app.DatePickerDialog
@@ -112,7 +132,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsScreen(
     viewModel: ExpenseViewModel,
@@ -140,6 +160,41 @@ fun TransactionsScreen(
     val customRange by viewModel.customDateRange.collectAsStateWithLifecycle()
     var showDatePicker by remember { mutableStateOf(false) }
     var showDateRangeFilterDialog by remember { mutableStateOf(false) }
+    val availableMonths by viewModel.availableMonths.collectAsStateWithLifecycle()
+    var showMonthPickerDropdown by remember { mutableStateOf(false) }
+
+    val periodLabel = remember(dateFilter, customRange) {
+        when (dateFilter) {
+            DateFilterType.TODAY -> "Today (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date())})"
+            DateFilterType.YESTERDAY -> {
+                val c = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+                "Yesterday (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(c.time)})"
+            }
+            DateFilterType.THIS_WEEK -> "This Week"
+            DateFilterType.THIS_MONTH -> SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date())
+            DateFilterType.PREVIOUS_MONTH -> {
+                val c = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(c.time)
+            }
+            DateFilterType.ALL_TIME -> "All Transactions (Filter by Month)"
+            DateFilterType.CUSTOM -> {
+                if (customRange != null) {
+                    val sdfMonth = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                    val sdfDay = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+                    val cStart = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
+                    val cEnd = Calendar.getInstance().apply { timeInMillis = customRange!!.second }
+                    if (cStart.get(Calendar.DAY_OF_MONTH) == 1 &&
+                        cEnd.get(Calendar.DAY_OF_MONTH) == cEnd.getActualMaximum(Calendar.DAY_OF_MONTH) &&
+                        cStart.get(Calendar.MONTH) == cEnd.get(Calendar.MONTH) &&
+                        cStart.get(Calendar.YEAR) == cEnd.get(Calendar.YEAR)) {
+                        sdfMonth.format(cStart.time)
+                    } else {
+                        "${sdfDay.format(Date(customRange!!.first))} - ${sdfDay.format(Date(customRange!!.second))}"
+                    }
+                } else "Custom Date Range"
+            }
+        }
+    }
 
     val topMerchants = remember(allExpenses) {
         allExpenses.map { it.title.trim() }
@@ -317,805 +372,772 @@ fun TransactionsScreen(
 
     val isSelectionActive = isMultiSelectMode || selectedIds.isNotEmpty()
     val totalFilteredAmount = expenses.sumOf { it.amount }
+    val listState = rememberLazyListState()
+    var isFullScreenLedgerMode by remember { mutableStateOf(false) }
+    var showAdvancedSearchFilters by remember { mutableStateOf(false) }
+    var selectedDetailExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    val isScrolledDown by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 1 || listState.firstVisibleItemScrollOffset > 40 }
+    }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .testTag("transactions_screen")
-        ) {
-            // Top Bar / Multi-select Action Bar
-            if (isSelectionActive) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.fillMaxWidth()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isTablet = maxWidth >= 720.dp
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = (if (isTablet) Modifier.weight(0.55f) else Modifier.fillMaxWidth())
+                    .fillMaxHeight()
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .testTag("transactions_screen"),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+            // Top Bar / Multi-select Action Bar or Main Header
+            if (isSelectionActive) {
+                item(key = "selection_bar") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    isMultiSelectMode = false
+                                    viewModel.clearExpenseSelection()
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Cancel selection")
+                                }
+                                Text(
+                                    text = "${selectedIds.size} selected",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+
+                            Row {
+                                IconButton(onClick = { viewModel.selectAllExpenses() }) {
+                                    Icon(Icons.Default.SelectAll, contentDescription = "Select All")
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val count = selectedIds.size
+                                        viewModel.deleteSelectedExpenses()
+                                        isMultiSelectMode = false
+                                        coroutineScope.launch {
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "Deleted $count transactions",
+                                                actionLabel = "Undo",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                viewModel.undoDelete()
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Selected", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (!isFullScreenLedgerMode) {
+                item(key = "header_title") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                isMultiSelectMode = false
-                                viewModel.clearExpenseSelection()
-                            }) {
-                                Icon(Icons.Default.Close, contentDescription = "Cancel selection")
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "${selectedIds.size} selected",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                text = "Transactions Ledger",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${expenses.size} items • Total: ${ExpenseEntity.formatInr(totalFilteredAmount)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        Row {
-                            IconButton(onClick = { viewModel.selectAllExpenses() }) {
-                                Icon(Icons.Default.SelectAll, contentDescription = "Select All")
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Toggle full-screen ledger mode
                             IconButton(
-                                onClick = {
-                                    val count = selectedIds.size
-                                    viewModel.deleteSelectedExpenses()
-                                    isMultiSelectMode = false
-                                    coroutineScope.launch {
-                                        val result = snackbarHostState.showSnackbar(
-                                            message = "Deleted $count transactions",
-                                            actionLabel = "Undo",
-                                            duration = SnackbarDuration.Short
+                                onClick = { isFullScreenLedgerMode = true },
+                                modifier = Modifier.testTag("toggle_fullscreen_ledger")
+                            ) {
+                                Icon(
+                                    Icons.Default.Fullscreen,
+                                    contentDescription = "Full-Screen Ledger",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { showExportTransactionsDialog = true },
+                                modifier = Modifier.testTag("export_transactions_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.FileDownload,
+                                    contentDescription = "Export Transactions",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Box {
+                                IconButton(onClick = { showSortMenu = true }) {
+                                    Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort", tint = MaterialTheme.colorScheme.primary)
+                                }
+                                DropdownMenu(
+                                    expanded = showSortMenu,
+                                    onDismissRequest = { showSortMenu = false }
+                                ) {
+                                    SortType.entries.forEach { sort ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = sort.label,
+                                                    fontWeight = if (sortType == sort) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (sortType == sort) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                )
+                                            },
+                                            onClick = {
+                                                viewModel.setSortType(sort)
+                                                showSortMenu = false
+                                            }
                                         )
-                                        if (result == SnackbarResult.ActionPerformed) {
-                                            viewModel.undoDelete()
-                                        }
                                     }
                                 }
+                            }
+
+                            IconButton(
+                                onClick = { showCardSuggestionsDialog = true },
+                                modifier = Modifier.testTag("manage_card_suggestions_button")
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete Selected", tint = MaterialTheme.colorScheme.error)
+                                Icon(
+                                    Icons.Default.CreditCard,
+                                    contentDescription = "Manage Credit Card Suggestions",
+                                    tint = com.example.ui.theme.TagShoppingAmberText
+                                )
                             }
                         }
                     }
                 }
             } else {
-                // Header with Total and Sort
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Transactions Ledger",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${expenses.size} items • Total: ${ExpenseEntity.formatInr(totalFilteredAmount)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { showExportTransactionsDialog = true },
-                            modifier = Modifier.testTag("export_transactions_button")
+                // Fullscreen mode compact header bar
+                item(key = "fullscreen_active_bar") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.FileDownload,
-                                contentDescription = "Export Transactions",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-
-                        Box {
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort", tint = MaterialTheme.colorScheme.primary)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Fullscreen,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Full-Screen Ledger • ${expenses.size} Items (${ExpenseEntity.formatInr(totalFilteredAmount)})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
                             }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
+                            IconButton(
+                                onClick = { isFullScreenLedgerMode = false },
+                                modifier = Modifier.size(32.dp).testTag("exit_fullscreen_ledger_button")
                             ) {
-                                SortType.entries.forEach { sort ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = sort.label,
-                                                fontWeight = if (sortType == sort) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (sortType == sort) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.setSortType(sort)
-                                            showSortMenu = false
-                                        }
-                                    )
-                                }
+                                Icon(
+                                    Icons.Default.FullscreenExit,
+                                    contentDescription = "Exit Fullscreen",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                        }
-
-                        IconButton(
-                            onClick = { showCardSuggestionsDialog = true },
-                            modifier = Modifier.testTag("manage_card_suggestions_button")
-                        ) {
-                            Icon(
-                                Icons.Default.CreditCard,
-                                contentDescription = "Manage Credit Card Suggestions",
-                                tint = com.example.ui.theme.TagShoppingAmberText
-                            )
                         }
                     }
                 }
             }
 
-            // ====================================================
-            // Search Bar at Top of Transaction List
-            // Filters entries by Category, Date, or Merchant Name
-            // ====================================================
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
-                shadowElevation = 1.dp
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    // Header with Title & Room FTS indicator
-                    Row(
+            if (!isFullScreenLedgerMode) {
+                // ====================================================
+                // Minimized, Sleek Search Bar (Compact ~46dp)
+                // Filters entries by Category, Date, or Merchant Name
+                // ====================================================
+                item(key = "compact_search_bar") {
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(vertical = 2.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Search Transactions",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Surface(
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "Room FTS",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    if (customRange != null) {
-                        val rangeFormatter = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
+                        Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .padding(horizontal = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.DateRange,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Date: ${rangeFormatter.format(Date(customRange!!.first))} – ${rangeFormatter.format(Date(customRange!!.second))}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        viewModel.setCustomDateRange(null)
-                                        viewModel.setDateFilter(DateFilterType.THIS_MONTH)
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = "Search",
+                                    tint = if (searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                OutlinedTextField(
+                                    value = searchQuery,
+                                    onValueChange = { viewModel.setSearchQuery(it) },
+                                    placeholder = {
+                                        Text(
+                                            text = if (searchScope == SearchFilterScope.ALL) "Search transactions, notes..." else searchScope.hint,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     },
+                                    singleLine = true,
                                     modifier = Modifier
-                                        .size(20.dp)
-                                        .testTag("clear_date_range_chip_button")
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear range", modifier = Modifier.size(12.dp))
-                                }
-                            }
-                        }
-                    }
+                                        .weight(1f)
+                                        .testTag("transaction_search_input"),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color.Transparent,
+                                        unfocusedBorderColor = Color.Transparent,
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent
+                                    ),
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                )
 
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { viewModel.setSearchQuery(it) },
-                        placeholder = {
-                            Text(
-                                text = searchScope.hint,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = "Search",
-                                tint = if (searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        trailingIcon = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (searchQuery.isNotEmpty()) {
                                     IconButton(
                                         onClick = { viewModel.setSearchQuery("") },
-                                        modifier = Modifier.testTag("clear_search_button")
+                                        modifier = Modifier.size(32.dp).testTag("clear_search_button")
                                     ) {
                                         Icon(
                                             Icons.Default.Clear,
                                             contentDescription = "Clear search",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
+
                                 IconButton(
                                     onClick = { showDateRangeFilterDialog = true },
-                                    modifier = Modifier.testTag("pick_search_date_range_button")
+                                    modifier = Modifier.size(32.dp).testTag("pick_search_date_range_button")
                                 ) {
                                     Icon(
                                         Icons.Default.DateRange,
                                         contentDescription = "Pick Date Range",
-                                        tint = if (customRange != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        tint = if (customRange != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
+
                                 IconButton(
                                     onClick = { showDatePicker = true },
-                                    modifier = Modifier.testTag("pick_search_date_button")
+                                    modifier = Modifier.size(32.dp).testTag("pick_search_date_button")
                                 ) {
                                     Icon(
                                         Icons.Default.CalendarMonth,
                                         contentDescription = "Pick single date",
-                                        tint = if (searchScope == SearchFilterScope.DATE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        tint = if (searchScope == SearchFilterScope.DATE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { showAdvancedSearchFilters = !showAdvancedSearchFilters },
+                                    modifier = Modifier.size(32.dp).testTag("toggle_search_filters_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Tune,
+                                        contentDescription = "Filter options",
+                                        tint = if (showAdvancedSearchFilters || searchScope != SearchFilterScope.ALL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("transaction_search_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Quick Search Scope Chips: Merchant, Category, Notes, Date, or All
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SearchFilterScope.entries.forEach { scope ->
-                            val isSelected = searchScope == scope
-                            val scopeIcon = when (scope) {
-                                SearchFilterScope.ALL -> Icons.Default.FilterList
-                                SearchFilterScope.MERCHANT -> Icons.Default.Storefront
-                                SearchFilterScope.CATEGORY -> Icons.Default.Category
-                                SearchFilterScope.NOTES -> Icons.Default.Description
-                                SearchFilterScope.DATE -> Icons.Default.DateRange
+                            // Active Date Range Indicator if present
+                            if (customRange != null) {
+                                val rangeFormatter = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.Default.DateRange,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "${rangeFormatter.format(Date(customRange!!.first))} – ${rangeFormatter.format(Date(customRange!!.second))}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.setCustomDateRange(null)
+                                                viewModel.setDateFilter(DateFilterType.THIS_MONTH)
+                                            },
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .testTag("clear_date_range_chip_button")
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = "Clear range", modifier = Modifier.size(12.dp))
+                                        }
+                                    }
+                                }
                             }
+
+                            // Collapsible Search Scopes & Contextual Quick Filters
+                            AnimatedVisibility(visible = showAdvancedSearchFilters || searchQuery.isNotBlank()) {
+                                Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                                    // Quick Search Scope Chips: Merchant, Category, Notes, Date, or All
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        SearchFilterScope.entries.forEach { scope ->
+                                            val isSelected = searchScope == scope
+                                            val scopeIcon = when (scope) {
+                                                SearchFilterScope.ALL -> Icons.Default.FilterList
+                                                SearchFilterScope.MERCHANT -> Icons.Default.Storefront
+                                                SearchFilterScope.CATEGORY -> Icons.Default.Category
+                                                SearchFilterScope.NOTES -> Icons.Default.Description
+                                                SearchFilterScope.DATE -> Icons.Default.DateRange
+                                            }
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    viewModel.setSearchScope(scope)
+                                                    if (scope == SearchFilterScope.DATE && searchQuery.isBlank()) {
+                                                        showDatePicker = true
+                                                    }
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = scopeIcon,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(13.dp)
+                                                    )
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = scope.label,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                                ),
+                                                modifier = Modifier.testTag("search_scope_${scope.name.lowercase()}")
+                                            )
+                                        }
+                                    }
+
+                                    // Contextual Quick Filters for Category Scope
+                                    AnimatedVisibility(visible = searchScope == SearchFilterScope.CATEGORY) {
+                                        Column {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Quick Category Filter:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                items(DefaultCategories) { cat ->
+                                                    val isCatActive = searchQuery.equals(cat, ignoreCase = true)
+                                                    FilterChip(
+                                                        selected = isCatActive,
+                                                        onClick = {
+                                                            if (isCatActive) viewModel.setSearchQuery("")
+                                                            else viewModel.setSearchQuery(cat)
+                                                        },
+                                                        label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Contextual Quick Filters for Merchant Scope
+                                    AnimatedVisibility(visible = searchScope == SearchFilterScope.MERCHANT && topMerchants.isNotEmpty()) {
+                                        Column {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Popular Merchants & Stores:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                items(topMerchants) { merchant ->
+                                                    val isMerchantActive = searchQuery.equals(merchant, ignoreCase = true)
+                                                    FilterChip(
+                                                        selected = isMerchantActive,
+                                                        onClick = {
+                                                            if (isMerchantActive) viewModel.setSearchQuery("")
+                                                            else viewModel.setSearchQuery(merchant)
+                                                        },
+                                                        leadingIcon = {
+                                                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                        },
+                                                        label = { Text(merchant, style = MaterialTheme.typography.labelSmall) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Contextual Quick Filters for Notes Scope
+                                    AnimatedVisibility(visible = searchScope == SearchFilterScope.NOTES) {
+                                        Column {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Common Note Keywords:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                val commonNotePresets = listOf("Refund", "Bill", "Dinner", "Trip", "Gift", "Shared", "Office", "Rent", "Subscription")
+                                                items(commonNotePresets) { notePreset ->
+                                                    val isNoteActive = searchQuery.equals(notePreset, ignoreCase = true)
+                                                    FilterChip(
+                                                        selected = isNoteActive,
+                                                        onClick = {
+                                                            if (isNoteActive) viewModel.setSearchQuery("")
+                                                            else viewModel.setSearchQuery(notePreset)
+                                                        },
+                                                        leadingIcon = {
+                                                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                        },
+                                                        label = { Text(notePreset, style = MaterialTheme.typography.labelSmall) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Contextual Quick Filters for Date Scope
+                                    AnimatedVisibility(visible = searchScope == SearchFilterScope.DATE) {
+                                        Column {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Quick Date Filter:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                val currentMonthLabel = SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(Date())
+                                                listOf("Today", "Yesterday", currentMonthLabel).forEach { datePreset ->
+                                                    item {
+                                                        FilterChip(
+                                                            selected = searchQuery.equals(datePreset, ignoreCase = true),
+                                                            onClick = {
+                                                                if (searchQuery.equals(datePreset, ignoreCase = true)) viewModel.setSearchQuery("")
+                                                                else viewModel.setSearchQuery(datePreset)
+                                                            },
+                                                            label = { Text(datePreset, style = MaterialTheme.typography.labelSmall) }
+                                                        )
+                                                    }
+                                                }
+                                                item {
+                                                    FilterChip(
+                                                        selected = customRange != null,
+                                                        onClick = { showDateRangeFilterDialog = true },
+                                                        leadingIcon = {
+                                                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                        },
+                                                        label = { Text("Pick Date Range...", style = MaterialTheme.typography.labelSmall) },
+                                                        modifier = Modifier.testTag("pick_date_range_chip")
+                                                    )
+                                                }
+                                                item {
+                                                    FilterChip(
+                                                        selected = false,
+                                                        onClick = { showDatePicker = true },
+                                                        leadingIcon = {
+                                                            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                        },
+                                                        label = { Text("Pick Single Date...", style = MaterialTheme.typography.labelSmall) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Active Search/Filter Summary Banner
+                if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All" || customRange != null) {
+                    item(key = "active_filter_summary") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(
+                                        Icons.Default.FilterList,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = buildString {
+                                            append("${expenses.size} result${if (expenses.size == 1) "" else "s"}")
+                                            if (searchQuery.isNotBlank()) {
+                                                append(" for \"$searchQuery\"")
+                                                if (searchScope != SearchFilterScope.ALL) {
+                                                    append(" in ${searchScope.label}")
+                                                }
+                                            }
+                                            if (customRange != null) {
+                                                append(" (Custom Date Range)")
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = "Reset All",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clickable { viewModel.clearAllFilters() }
+                                        .padding(4.dp)
+                                        .testTag("reset_filters_button")
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Date Range Filter Chips
+                item(key = "date_range_filter_chips") {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(DateFilterType.entries) { df ->
                             FilterChip(
-                                selected = isSelected,
+                                selected = dateFilter == df,
                                 onClick = {
-                                    viewModel.setSearchScope(scope)
-                                    if (scope == SearchFilterScope.DATE && searchQuery.isBlank()) {
-                                        showDatePicker = true
+                                    if (df == DateFilterType.CUSTOM) {
+                                        showDateRangeFilterDialog = true
+                                    } else {
+                                        viewModel.setDateFilter(df)
                                     }
                                 },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = scopeIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        text = scope.label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
+                                label = { Text(df.label, style = MaterialTheme.typography.labelMedium) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                ),
-                                modifier = Modifier.testTag("search_scope_${scope.name.lowercase()}")
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                                )
                             )
                         }
                     }
+                }
 
-                    // Contextual Quick Filters for Category Scope
-                    AnimatedVisibility(visible = searchScope == SearchFilterScope.CATEGORY) {
-                        Column {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Quick Category Filter:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(DefaultCategories) { cat ->
-                                    val isCatActive = searchQuery.equals(cat, ignoreCase = true)
-                                    FilterChip(
-                                        selected = isCatActive,
-                                        onClick = {
-                                            if (isCatActive) viewModel.setSearchQuery("")
-                                            else viewModel.setSearchQuery(cat)
-                                        },
-                                        label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Contextual Quick Filters for Merchant Scope
-                    AnimatedVisibility(visible = searchScope == SearchFilterScope.MERCHANT && topMerchants.isNotEmpty()) {
-                        Column {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Popular Merchants & Stores:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(topMerchants) { merchant ->
-                                    val isMerchantActive = searchQuery.equals(merchant, ignoreCase = true)
-                                    FilterChip(
-                                        selected = isMerchantActive,
-                                        onClick = {
-                                            if (isMerchantActive) viewModel.setSearchQuery("")
-                                            else viewModel.setSearchQuery(merchant)
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(12.dp))
-                                        },
-                                        label = { Text(merchant, style = MaterialTheme.typography.labelSmall) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Contextual Quick Filters for Notes Scope
-                    AnimatedVisibility(visible = searchScope == SearchFilterScope.NOTES) {
-                        Column {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Common Note Keywords:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val commonNotePresets = listOf("Refund", "Bill", "Dinner", "Trip", "Gift", "Shared", "Office", "Rent", "Subscription")
-                                items(commonNotePresets) { notePreset ->
-                                    val isNoteActive = searchQuery.equals(notePreset, ignoreCase = true)
-                                    FilterChip(
-                                        selected = isNoteActive,
-                                        onClick = {
-                                            if (isNoteActive) viewModel.setSearchQuery("")
-                                            else viewModel.setSearchQuery(notePreset)
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(12.dp))
-                                        },
-                                        label = { Text(notePreset, style = MaterialTheme.typography.labelSmall) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Contextual Quick Filters for Date Scope
-                    AnimatedVisibility(visible = searchScope == SearchFilterScope.DATE) {
-                        Column {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Quick Date Filter:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val currentMonthLabel = SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(Date())
-                                listOf("Today", "Yesterday", currentMonthLabel).forEach { datePreset ->
-                                    item {
-                                        FilterChip(
-                                            selected = searchQuery.equals(datePreset, ignoreCase = true),
-                                            onClick = {
-                                                if (searchQuery.equals(datePreset, ignoreCase = true)) viewModel.setSearchQuery("")
-                                                else viewModel.setSearchQuery(datePreset)
-                                            },
-                                            label = { Text(datePreset, style = MaterialTheme.typography.labelSmall) }
+                item(key = "month_picker_selector") {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { showMonthPickerDropdown = true }
+                                .testTag("month_dropdown_selector")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primaryContainer),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarMonth,
+                                            contentDescription = "Month Dropdown List",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = "SELECT MONTH / PERIOD",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = periodLabel,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
-                                item {
-                                    FilterChip(
-                                        selected = customRange != null,
-                                        onClick = { showDateRangeFilterDialog = true },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(12.dp))
-                                        },
-                                        label = { Text("Pick Date Range...", style = MaterialTheme.typography.labelSmall) },
-                                        modifier = Modifier.testTag("pick_date_range_chip")
-                                    )
-                                }
-                                item {
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = { showDatePicker = true },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(12.dp))
-                                        },
-                                        label = { Text("Pick Single Date...", style = MaterialTheme.typography.labelSmall) }
-                                    )
-                                }
+
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Open month dropdown list",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(28.dp)
+                                )
                             }
                         }
-                    }
-                }
-            }
 
-            // Active Search/Filter Summary Banner
-            if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All" || customRange != null) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(
-                                Icons.Default.FilterList,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = buildString {
-                                    append("${expenses.size} result${if (expenses.size == 1) "" else "s"}")
-                                    if (searchQuery.isNotBlank()) {
-                                        append(" for \"$searchQuery\"")
-                                        if (searchScope != SearchFilterScope.ALL) {
-                                            append(" in ${searchScope.label}")
+                        DropdownMenu(
+                            expanded = showMonthPickerDropdown,
+                            onDismissRequest = { showMonthPickerDropdown = false },
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .testTag("month_dropdown_menu")
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "This Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date())})",
+                                            fontWeight = if (dateFilter == DateFilterType.THIS_MONTH) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (dateFilter == DateFilterType.THIS_MONTH) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
                                         }
                                     }
-                                    if (customRange != null) {
-                                        append(" (Custom Date Range)")
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                onClick = {
+                                    viewModel.setDateFilter(DateFilterType.THIS_MONTH)
+                                    viewModel.setCustomDateRange(null)
+                                    showMonthPickerDropdown = false
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    val prevC = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "Previous Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(prevC.time)})",
+                                            fontWeight = if (dateFilter == DateFilterType.PREVIOUS_MONTH) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                leadingIcon = {
+                                    Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                                },
+                                onClick = {
+                                    viewModel.setDateFilter(DateFilterType.PREVIOUS_MONTH)
+                                    viewModel.setCustomDateRange(null)
+                                    showMonthPickerDropdown = false
+                                }
                             )
-                        }
-                        Text(
-                            text = "Reset All",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clickable {
-                                    viewModel.clearAllFilters()
-                                }
-                                .padding(4.dp)
-                                .testTag("reset_filters_button")
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Date Range Filter Chips
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(DateFilterType.entries) { df ->
-                    FilterChip(
-                        selected = dateFilter == df,
-                        onClick = {
-                            if (df == DateFilterType.CUSTOM) {
-                                showDateRangeFilterDialog = true
-                            } else {
-                                viewModel.setDateFilter(df)
-                            }
-                        },
-                        label = { Text(df.label, style = MaterialTheme.typography.labelMedium) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                    )
-                }
-            }
-
-            // Month Switcher for viewing previous months
-            val availableMonths by viewModel.availableMonths.collectAsStateWithLifecycle()
-            var showMonthPickerDropdown by remember { mutableStateOf(false) }
-
-            val periodLabel = remember(dateFilter, customRange) {
-                when (dateFilter) {
-                    DateFilterType.TODAY -> "Today (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date())})"
-                    DateFilterType.YESTERDAY -> {
-                        val c = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-                        "Yesterday (${SimpleDateFormat("dd MMM", Locale.getDefault()).format(c.time)})"
-                    }
-                    DateFilterType.THIS_WEEK -> "This Week"
-                    DateFilterType.THIS_MONTH -> SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date())
-                    DateFilterType.PREVIOUS_MONTH -> {
-                        val c = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
-                        SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(c.time)
-                    }
-                    DateFilterType.ALL_TIME -> "All Transactions (Filter by Month)"
-                    DateFilterType.CUSTOM -> {
-                        if (customRange != null) {
-                            val sdfMonth = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-                            val sdfDay = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-                            val cStart = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
-                            val cEnd = Calendar.getInstance().apply { timeInMillis = customRange!!.second }
-                            if (cStart.get(Calendar.DAY_OF_MONTH) == 1 &&
-                                cEnd.get(Calendar.DAY_OF_MONTH) == cEnd.getActualMaximum(Calendar.DAY_OF_MONTH) &&
-                                cStart.get(Calendar.MONTH) == cEnd.get(Calendar.MONTH) &&
-                                cStart.get(Calendar.YEAR) == cEnd.get(Calendar.YEAR)) {
-                                sdfMonth.format(cStart.time)
-                            } else {
-                                "${sdfDay.format(Date(customRange!!.first))} - ${sdfDay.format(Date(customRange!!.second))}"
-                            }
-                        } else "Custom Date Range"
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { showMonthPickerDropdown = true }
-                        .testTag("month_dropdown_selector")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = "Month Dropdown List",
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = "SELECT MONTH / PERIOD",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = periodLabel,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Icon(
-                            imageVector = Icons.Default.ArrowDropDown,
-                            contentDescription = "Open month dropdown list",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
-
-                DropdownMenu(
-                    expanded = showMonthPickerDropdown,
-                    onDismissRequest = { showMonthPickerDropdown = false },
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .testTag("month_dropdown_menu")
-                ) {
-                    DropdownMenuItem(
-                        text = {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "This Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date())})",
-                                    fontWeight = if (dateFilter == DateFilterType.THIS_MONTH) FontWeight.Bold else FontWeight.Normal
-                                )
-                                if (dateFilter == DateFilterType.THIS_MONTH) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        },
-                        onClick = {
-                            viewModel.setDateFilter(DateFilterType.THIS_MONTH)
-                            viewModel.setCustomDateRange(null)
-                            showMonthPickerDropdown = false
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            val prevC = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "Previous Month (${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(prevC.time)})",
-                                    fontWeight = if (dateFilter == DateFilterType.PREVIOUS_MONTH) FontWeight.Bold else FontWeight.Normal
-                                )
-                                if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                        },
-                        onClick = {
-                            viewModel.setDateFilter(DateFilterType.PREVIOUS_MONTH)
-                            viewModel.setCustomDateRange(null)
-                            showMonthPickerDropdown = false
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "All Transactions (All Time)",
-                                    fontWeight = if (dateFilter == DateFilterType.ALL_TIME) FontWeight.Bold else FontWeight.Normal
-                                )
-                                if (dateFilter == DateFilterType.ALL_TIME) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        },
-                        leadingIcon = {
-                            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
-                        },
-                        onClick = {
-                            viewModel.setDateFilter(DateFilterType.ALL_TIME)
-                            viewModel.setCustomDateRange(null)
-                            showMonthPickerDropdown = false
-                        }
-                    )
-
-                    if (availableMonths.isNotEmpty()) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        Text(
-                            text = "RECORDED MONTHS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                        )
-                        availableMonths.take(18).forEach { availMonth ->
-                            val isSelected = remember(dateFilter, customRange, availMonth) {
-                                if (dateFilter == DateFilterType.THIS_MONTH) {
-                                    val now = Calendar.getInstance()
-                                    now.get(Calendar.YEAR) == availMonth.year && (now.get(Calendar.MONTH) + 1) == availMonth.month
-                                } else if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
-                                    val prev = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
-                                    prev.get(Calendar.YEAR) == availMonth.year && (prev.get(Calendar.MONTH) + 1) == availMonth.month
-                                } else if (dateFilter == DateFilterType.CUSTOM && customRange != null) {
-                                    val cal = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
-                                    cal.get(Calendar.YEAR) == availMonth.year && (cal.get(Calendar.MONTH) + 1) == availMonth.month
-                                } else false
-                            }
 
                             DropdownMenuItem(
                                 text = {
@@ -1125,199 +1147,291 @@ fun TransactionsScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            availMonth.label,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            "All Transactions (All Time)",
+                                            fontWeight = if (dateFilter == DateFilterType.ALL_TIME) FontWeight.Bold else FontWeight.Normal
                                         )
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                "${availMonth.count} txns • ${ExpenseEntity.formatInr(availMonth.totalSpent)}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        if (dateFilter == DateFilterType.ALL_TIME) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
                                             )
-                                            if (isSelected) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = "Selected",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
                                         }
                                     }
                                 },
                                 leadingIcon = {
-                                    Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
                                 },
                                 onClick = {
-                                    viewModel.selectMonthForLedger(availMonth.year, availMonth.month)
+                                    viewModel.setDateFilter(DateFilterType.ALL_TIME)
+                                    viewModel.setCustomDateRange(null)
                                     showMonthPickerDropdown = false
                                 }
                             )
+
+                            if (availableMonths.isNotEmpty()) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                Text(
+                                    text = "RECORDED MONTHS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                                availableMonths.take(18).forEach { availMonth ->
+                                    val isSelected = remember(dateFilter, customRange, availMonth) {
+                                        if (dateFilter == DateFilterType.THIS_MONTH) {
+                                            val now = Calendar.getInstance()
+                                            now.get(Calendar.YEAR) == availMonth.year && (now.get(Calendar.MONTH) + 1) == availMonth.month
+                                        } else if (dateFilter == DateFilterType.PREVIOUS_MONTH) {
+                                            val prev = Calendar.getInstance().apply { add(Calendar.MONTH, -1) }
+                                            prev.get(Calendar.YEAR) == availMonth.year && (prev.get(Calendar.MONTH) + 1) == availMonth.month
+                                        } else if (dateFilter == DateFilterType.CUSTOM && customRange != null) {
+                                            val cal = Calendar.getInstance().apply { timeInMillis = customRange!!.first }
+                                            cal.get(Calendar.YEAR) == availMonth.year && (cal.get(Calendar.MONTH) + 1) == availMonth.month
+                                        } else false
+                                    }
+
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    availMonth.label,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        "${availMonth.count} txns • ${ExpenseEntity.formatInr(availMonth.totalSpent)}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    if (isSelected) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = "Selected",
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        },
+                                        onClick = {
+                                            viewModel.selectMonthForLedger(availMonth.year, availMonth.month)
+                                            showMonthPickerDropdown = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Payment Method Filter Chips
+                item(key = "payment_method_chips") {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = paymentFilter == "All" || paymentFilter.isNullOrBlank(),
+                                onClick = { viewModel.setPaymentFilter("All") },
+                                label = { Text("All Payments") }
+                            )
+                        }
+                        listOf("UPI", "Credit Card", "RuPay Credit Card", "Debit Card", "Net Banking", "Cash").forEach { method ->
+                            item {
+                                FilterChip(
+                                    selected = paymentFilter.equals(method, ignoreCase = true),
+                                    onClick = {
+                                        if (paymentFilter.equals(method, ignoreCase = true)) viewModel.setPaymentFilter("All")
+                                        else viewModel.setPaymentFilter(method)
+                                    },
+                                    leadingIcon = {
+                                        if (method == "Credit Card" || method == "RuPay Credit Card" || method == "Debit Card") {
+                                            Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        } else if (method == "UPI" || method == "Net Banking") {
+                                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        }
+                                    },
+                                    label = { Text(method) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Category & Tag Filter Chips
+                item(key = "category_tag_chips") {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = categoryFilter == "All",
+                                onClick = { viewModel.setCategoryFilter("All") },
+                                label = { Text("All Categories") }
+                            )
+                        }
+                        items(DefaultCategories) { cat ->
+                            FilterChip(
+                                selected = categoryFilter.equals(cat, ignoreCase = true),
+                                onClick = {
+                                    if (categoryFilter.equals(cat, ignoreCase = true)) viewModel.setCategoryFilter("All")
+                                    else viewModel.setCategoryFilter(cat)
+                                },
+                                label = { Text(cat) }
+                            )
+                        }
+                        item {
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        listOf("Personal", "Work", "Family", "Business").forEach { tag ->
+                            item {
+                                FilterChip(
+                                    selected = tagFilter.equals(tag, ignoreCase = true),
+                                    onClick = {
+                                        if (tagFilter.equals(tag, ignoreCase = true)) viewModel.setTagFilter("All")
+                                        else viewModel.setTagFilter(tag)
+                                    },
+                                    label = { Text("Tag: $tag") }
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Payment Method Filter Chips (UPI, Credit Card, etc.)
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                item {
-                    FilterChip(
-                        selected = paymentFilter == "All" || paymentFilter.isNullOrBlank(),
-                        onClick = { viewModel.setPaymentFilter("All") },
-                        label = { Text("All Payments") }
-                    )
-                }
-                listOf("UPI", "Credit Card", "RuPay Credit Card", "Debit Card", "Net Banking", "Cash").forEach { method ->
-                    item {
-                        FilterChip(
-                            selected = paymentFilter.equals(method, ignoreCase = true),
-                            onClick = {
-                                if (paymentFilter.equals(method, ignoreCase = true)) viewModel.setPaymentFilter("All")
-                                else viewModel.setPaymentFilter(method)
-                            },
-                            leadingIcon = {
-                                if (method == "Credit Card" || method == "RuPay Credit Card" || method == "Debit Card") {
-                                    Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(14.dp))
-                                } else if (method == "UPI" || method == "Net Banking") {
-                                    Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
-                            },
-                            label = { Text(method) }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Category & Tag Filter Chips
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                item {
-                    FilterChip(
-                        selected = categoryFilter == "All",
-                        onClick = { viewModel.setCategoryFilter("All") },
-                        label = { Text("All Categories") }
-                    )
-                }
-                items(DefaultCategories) { cat ->
-                    FilterChip(
-                        selected = categoryFilter.equals(cat, ignoreCase = true),
-                        onClick = {
-                            if (categoryFilter.equals(cat, ignoreCase = true)) viewModel.setCategoryFilter("All")
-                            else viewModel.setCategoryFilter(cat)
-                        },
-                        label = { Text(cat) }
-                    )
-                }
-                item {
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                listOf("Personal", "Work", "Family", "Business").forEach { tag ->
-                    item {
-                        FilterChip(
-                            selected = tagFilter.equals(tag, ignoreCase = true),
-                            onClick = {
-                                if (tagFilter.equals(tag, ignoreCase = true)) viewModel.setTagFilter("All")
-                                else viewModel.setTagFilter(tag)
-                            },
-                            label = { Text("Tag: $tag") }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
             // Transactions List
             if (expenses.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.FilterList,
-                            contentDescription = "Empty",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "No transactions matching \"$searchQuery\"" else "No matching transactions",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "Try searching by another merchant name, category, or date format" else "Try adjusting your search query or filter chips",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All") {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            OutlinedButton(
-                                onClick = { viewModel.clearAllFilters() },
-                                modifier = Modifier.testTag("empty_state_clear_filters_button")
-                            ) {
-                                Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Clear Search & Filters")
+                item(key = "empty_state") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Default.FilterList,
+                                contentDescription = "Empty",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (searchQuery.isNotBlank()) "No transactions matching \"$searchQuery\"" else "No matching transactions",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (searchQuery.isNotBlank()) "Try searching by another merchant name, category, or date format" else "Try adjusting your search query or filter chips",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            if (searchQuery.isNotBlank() || categoryFilter != "All" || paymentFilter != "All" || tagFilter != "All") {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedButton(
+                                    onClick = { viewModel.clearAllFilters() },
+                                    modifier = Modifier.testTag("empty_state_clear_filters_button")
+                                ) {
+                                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Clear Search & Filters")
+                                }
                             }
                         }
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(expenses, key = { it.id }) { item ->
-                        val isSelected = selectedIds.contains(item.id)
+                items(expenses, key = { it.id }) { item ->
+                    val isSelected = selectedIds.contains(item.id) || (isTablet && selectedDetailExpense?.id == item.id)
 
-                        TransactionLedgerItem(
-                            expense = item,
-                            isSelectMode = isSelectionActive,
-                            isSelected = isSelected,
-                            onItemClick = {
-                                if (isSelectionActive) {
-                                    viewModel.toggleExpenseSelection(item.id)
-                                } else {
-                                    onEditExpenseClick(item)
-                                }
-                            },
-                            onLongClick = {
-                                isMultiSelectMode = true
+                    TransactionLedgerItem(
+                        expense = item,
+                        isSelectMode = isSelectionActive,
+                        isSelected = isSelected,
+                        onItemClick = {
+                            if (isSelectionActive) {
                                 viewModel.toggleExpenseSelection(item.id)
-                            },
-                            onDelete = {
-                                viewModel.deleteExpense(item)
-                                coroutineScope.launch {
-                                    val result = snackbarHostState.showSnackbar(
-                                        message = "Deleted ${item.title}",
-                                        actionLabel = "Undo",
-                                        duration = SnackbarDuration.Short
-                                    )
-                                    if (result == SnackbarResult.ActionPerformed) {
-                                        viewModel.undoDelete()
-                                    }
+                            } else {
+                                // View transaction ledger entry in full-screen detail
+                                selectedDetailExpense = item
+                            }
+                        },
+                        onLongClick = {
+                            isMultiSelectMode = true
+                            viewModel.toggleExpenseSelection(item.id)
+                        },
+                        onDelete = {
+                            viewModel.deleteExpense(item)
+                            coroutineScope.launch {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Deleted ${item.title}",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    viewModel.undoDelete()
                                 }
                             }
-                        )
+                        }
+                    )
+                }
+            }
+        }
+
+        // Floating indicator when scrolled down: allows 1-tap return to top
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isScrolledDown,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp)
+        ) {
+            Surface(
+                onClick = {
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(0)
                     }
+                },
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 6.dp,
+                tonalElevation = 4.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                modifier = Modifier.testTag("scroll_to_top_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Scroll to top",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Viewing Fullscreen Ledger • Top",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
         }
@@ -1328,6 +1442,61 @@ fun TransactionsScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 80.dp)
         )
+            } // End Left Pane Box
+
+            if (isTablet) {
+                VerticalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(0.45f)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(16.dp)
+                ) {
+                    if (selectedDetailExpense != null) {
+                        TabletTransactionDetailCard(
+                            expense = selectedDetailExpense!!,
+                            onClose = { selectedDetailExpense = null },
+                            onEdit = {
+                                val toEdit = selectedDetailExpense!!
+                                onEditExpenseClick(toEdit)
+                            },
+                            onDelete = {
+                                val toDelete = selectedDetailExpense!!
+                                selectedDetailExpense = null
+                                viewModel.deleteExpense(toDelete)
+                                coroutineScope.launch {
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Deleted ${toDelete.title}",
+                                        actionLabel = "Undo",
+                                        duration = SnackbarDuration.Short
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        viewModel.undoDelete()
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        TabletLedgerOverviewCard(
+                            filteredExpenses = expenses,
+                            totalAmount = totalFilteredAmount,
+                            currentPeriod = periodLabel,
+                            categoryFilter = categoryFilter,
+                            paymentFilter = paymentFilter,
+                            onExportClick = { showExportTransactionsDialog = true },
+                            onOpenMonthlyReport = { showMonthlyReportDialog = true }
+                        )
+                    }
+                }
+            }
+        } // End Row
 
         if (showCardSuggestionsDialog) {
             EditCardSuggestionsDialog(
@@ -1367,6 +1536,33 @@ fun TransactionsScreen(
                 viewModel = viewModel,
                 initialTab = exportDateReportInitialTab,
                 onDismissRequest = { showExportDateReportDialog = false }
+            )
+        }
+
+        if (!isTablet && selectedDetailExpense != null) {
+            FullScreenTransactionDetailSheet(
+                expense = selectedDetailExpense!!,
+                onDismiss = { selectedDetailExpense = null },
+                onEdit = {
+                    val toEdit = selectedDetailExpense!!
+                    selectedDetailExpense = null
+                    onEditExpenseClick(toEdit)
+                },
+                onDelete = {
+                    val toDelete = selectedDetailExpense!!
+                    selectedDetailExpense = null
+                    viewModel.deleteExpense(toDelete)
+                    coroutineScope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "Deleted ${toDelete.title}",
+                            actionLabel = "Undo",
+                            duration = SnackbarDuration.Short
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            viewModel.undoDelete()
+                        }
+                    }
+                }
             )
         }
     }
@@ -1604,3 +1800,663 @@ fun TransactionLedgerItem(
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FullScreenTransactionDetailSheet(
+    expense: ExpenseEntity,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val (badgeBg, badgeText) = when {
+        expense.category.contains("Food", true) -> Pair(com.example.ui.theme.TagFoodCoral, com.example.ui.theme.TagFoodCoralText)
+        expense.category.contains("Travel", true) || expense.category.contains("Transport", true) -> Pair(com.example.ui.theme.TagTransportBlue, com.example.ui.theme.TagTransportBlueText)
+        expense.category.contains("Income", true) || expense.category.contains("Salary", true) -> Pair(com.example.ui.theme.TagIncomeMint, com.example.ui.theme.TagIncomeMintText)
+        else -> Pair(com.example.ui.theme.TagShoppingAmber, com.example.ui.theme.TagShoppingAmberText)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = {
+            Surface(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 8.dp)
+                    .size(width = 40.dp, height = 4.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+            ) {}
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(bottom = 28.dp)
+        ) {
+            // Header: Title & Close
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ReceiptLong,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Transaction Ledger Entry",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Main Hero Card with Amount & Title
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(badgeBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = getCategoryIcon(expense.category),
+                            contentDescription = expense.category,
+                            tint = badgeText,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "- ${expense.formattedAmount}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = expense.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Transaction Information Rows
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LedgerDetailRow(
+                        label = "Category",
+                        value = expense.category,
+                        icon = Icons.Default.Category
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    LedgerDetailRow(
+                        label = "Date & Time",
+                        value = "${expense.formattedDate} at ${expense.formattedTime}",
+                        icon = Icons.Default.CalendarMonth
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    LedgerDetailRow(
+                        label = "Payment Method",
+                        value = expense.paymentMethod,
+                        icon = Icons.Default.AccountBalanceWallet
+                    )
+
+                    if (expense.creditCardName.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        LedgerDetailRow(
+                            label = "Credit Card",
+                            value = expense.creditCardName,
+                            icon = Icons.Default.CreditCard
+                        )
+                    }
+
+                    if (expense.bankName.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        LedgerDetailRow(
+                            label = "Bank Account",
+                            value = expense.bankName,
+                            icon = Icons.Default.AccountBalanceWallet
+                        )
+                    }
+
+                    if (expense.tag.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        LedgerDetailRow(
+                            label = "Tag",
+                            value = expense.tag,
+                            icon = Icons.Default.FilterList
+                        )
+                    }
+
+                    if (expense.notes.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        LedgerDetailRow(
+                            label = "Notes / Memo",
+                            value = expense.notes,
+                            icon = Icons.Default.Description
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Bottom Actions: Edit, Share, Delete
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        val shareText = "Transaction Receipt:\n• Title: ${expense.title}\n• Amount: ${expense.formattedAmount}\n• Category: ${expense.category}\n• Date: ${expense.formattedDate} ${expense.formattedTime}\n• Payment: ${expense.paymentMethod}${if (expense.notes.isNotBlank()) "\n• Note: ${expense.notes}" else ""}"
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Transaction"))
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share")
+                }
+
+                Button(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Edit")
+                }
+
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LedgerDetailRow(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+fun TabletLedgerOverviewCard(
+    filteredExpenses: List<ExpenseEntity>,
+    totalAmount: Double,
+    currentPeriod: String,
+    categoryFilter: String?,
+    paymentFilter: String?,
+    onExportClick: () -> Unit,
+    onOpenMonthlyReport: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("tablet_ledger_overview_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Ledger Overview",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = currentPeriod,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Stat Cards Grid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Total Spending",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = ExpenseEntity.formatInr(totalAmount),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Entries Found",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${filteredExpenses.size} txns",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            val avgAmount = if (filteredExpenses.isNotEmpty()) totalAmount / filteredExpenses.size else 0.0
+            val maxExpense = filteredExpenses.maxByOrNull { it.amount }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Average Ticket",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = ExpenseEntity.formatInr(avgAmount),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Max Expense",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (maxExpense != null) ExpenseEntity.formatInr(maxExpense.amount) else "₹0.00",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = com.example.ui.theme.TagFoodCoralText
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Action Card / Instruction
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Select any transaction on the left to inspect its complete audit log, payment method, credit card badges, notes, and edit/delete actions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onExportClick,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Export Ledger")
+                }
+
+                Button(
+                    onClick = onOpenMonthlyReport,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Visual Report")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TabletTransactionDetailCard(
+    expense: ExpenseEntity,
+    onClose: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    val (badgeBg, badgeText) = when {
+        expense.category.contains("Food", true) -> Pair(com.example.ui.theme.TagFoodCoral, com.example.ui.theme.TagFoodCoralText)
+        expense.category.contains("Travel", true) || expense.category.contains("Transport", true) -> Pair(com.example.ui.theme.TagTransportBlue, com.example.ui.theme.TagTransportBlueText)
+        expense.category.contains("Income", true) || expense.category.contains("Salary", true) -> Pair(com.example.ui.theme.TagIncomeMint, com.example.ui.theme.TagIncomeMintText)
+        else -> Pair(com.example.ui.theme.TagShoppingAmber, com.example.ui.theme.TagShoppingAmberText)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("tablet_transaction_detail_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp)
+        ) {
+            // Header: Title & Close
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ReceiptLong,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Transaction Inspector",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close inspector")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Main Hero Card with Amount & Title
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(badgeBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = getCategoryIcon(expense.category),
+                            contentDescription = expense.category,
+                            tint = badgeText,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "- ${expense.formattedAmount}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = expense.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Information Rows
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    LedgerDetailRow("Date", expense.formattedDate, Icons.Default.CalendarToday)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                    LedgerDetailRow("Time", expense.formattedTime, Icons.Default.DateRange)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                    LedgerDetailRow("Category", expense.category, Icons.Default.Category)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                    LedgerDetailRow("Payment Method", expense.paymentMethod, Icons.Default.CreditCard)
+                    if (expense.creditCardName.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        LedgerDetailRow("Card / Bank", expense.creditCardName, Icons.Default.CreditCard)
+                    }
+                    if (expense.tag.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        LedgerDetailRow("Tag", expense.tag, Icons.Default.Category)
+                    }
+                    if (expense.notes.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        LedgerDetailRow("Notes", expense.notes, Icons.Default.Description)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        val shareText = "Transaction Receipt:\n" +
+                                "Title: ${expense.title}\n" +
+                                "Amount: -${expense.formattedAmount}\n" +
+                                "Category: ${expense.category}\n" +
+                                "Date: ${expense.formattedDate} ${expense.formattedTime}\n" +
+                                "Payment: ${expense.paymentMethod} ${if (expense.creditCardName.isNotBlank()) "(${expense.creditCardName})" else ""}"
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Transaction"))
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share")
+                }
+
+                Button(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Edit")
+                }
+
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}
+

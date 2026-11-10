@@ -96,6 +96,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -642,6 +643,7 @@ fun ReceiptScanScreen(
         ReceiptParsedReviewSheet(
             extracted = extractedResult!!,
             capturedBitmap = capturedBitmap,
+            viewModel = viewModel,
             onDismiss = {
                 showReviewSheet = false
             },
@@ -927,6 +929,7 @@ private fun CameraPermissionPrompt(
 fun ReceiptParsedReviewSheet(
     extracted: ExtractedTransaction,
     capturedBitmap: Bitmap?,
+    viewModel: ExpenseViewModel? = null,
     onDismiss: () -> Unit,
     onSave: (ExtractedTransaction) -> Unit,
     onRetake: () -> Unit,
@@ -936,10 +939,25 @@ fun ReceiptParsedReviewSheet(
 
     var merchantTitle by remember(extracted) { mutableStateOf(extracted.title) }
     var amountStr by remember(extracted) { mutableStateOf(if (extracted.amount > 0) extracted.amount.toString() else "") }
-    var selectedCategory by remember(extracted) { mutableStateOf(extracted.category) }
+    var selectedCategory by remember(extracted) {
+        val initial = extracted.category
+        if (initial.isNotBlank() && initial != "Miscellaneous") {
+            mutableStateOf(initial)
+        } else {
+            val pred = viewModel?.predictCategoryOnDevice(extracted.title, extracted.amount, extracted.notes)
+            if (pred != null && pred.isConfident) mutableStateOf(pred.predictedCategory) else mutableStateOf(initial.ifEmpty { "Miscellaneous" })
+        }
+    }
     var selectedPaymentMethod by remember(extracted) { mutableStateOf(extracted.paymentMethod) }
     var selectedDate by remember(extracted) { mutableLongStateOf(extracted.date) }
     var notesText by remember(extracted) { mutableStateOf(extracted.notes) }
+
+    val onDevicePrediction = remember(merchantTitle, amountStr, notesText) {
+        val amt = amountStr.toDoubleOrNull() ?: 0.0
+        if (merchantTitle.isNotBlank() && viewModel != null) {
+            viewModel.predictCategoryOnDevice(merchantTitle, amt, notesText)
+        } else null
+    }
 
     val formattedDate = remember(selectedDate) {
         val sdf = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
@@ -1115,11 +1133,38 @@ fun ReceiptParsedReviewSheet(
             // Category Selection Chips
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "Category (AI Recommended)",
+                    text = "Category (On-Device ML & AI Recommended)",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = SophisticatedDarkOnSurface
                 )
+
+                val pred = onDevicePrediction
+                if (pred != null && pred.isConfident && !selectedCategory.equals(pred.predictedCategory, ignoreCase = true)) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = SophisticatedPrimary.copy(alpha = 0.15f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SophisticatedPrimary.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedCategory = pred.predictedCategory }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "✨ On-Device ML: ${pred.predictedCategory} (${(pred.confidence * 100).toInt()}% match)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text("Apply", style = MaterialTheme.typography.labelSmall, color = SophisticatedPrimary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

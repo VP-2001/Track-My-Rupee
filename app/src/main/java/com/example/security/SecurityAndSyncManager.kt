@@ -6,6 +6,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.example.ui.theme.AppThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,37 @@ class SecurityAndSyncManager(private val context: Context) {
     private val _isAutoSyncEnabled = MutableStateFlow(prefs.getBoolean("auto_cloud_sync_enabled", true))
     val isAutoSyncEnabled: StateFlow<Boolean> = _isAutoSyncEnabled.asStateFlow()
 
+    private val _themeMode = MutableStateFlow(getStoredThemeMode())
+    val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
+
+    private val _hasCompletedOnboarding = MutableStateFlow(prefs.getBoolean("has_completed_onboarding", false))
+    val hasCompletedOnboarding: StateFlow<Boolean> = _hasCompletedOnboarding.asStateFlow()
+
+    // Lockout tracking for failed PIN attempts
+    private var failedPinAttempts: Int = prefs.getInt("failed_pin_attempts", 0)
+    private var lockoutUntilTimestamp: Long = prefs.getLong("lockout_until_timestamp", 0L)
+
+    fun hasCompletedOnboarding(): Boolean = prefs.getBoolean("has_completed_onboarding", false)
+
+    fun setOnboardingCompleted(completed: Boolean = true) {
+        prefs.edit().putBoolean("has_completed_onboarding", completed).apply()
+        _hasCompletedOnboarding.value = completed
+    }
+
+    private fun getStoredThemeMode(): AppThemeMode {
+        val name = prefs.getString("app_theme_mode", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
+        return try {
+            AppThemeMode.valueOf(name)
+        } catch (_: Exception) {
+            AppThemeMode.SYSTEM
+        }
+    }
+
+    fun setThemeMode(mode: AppThemeMode) {
+        prefs.edit().putString("app_theme_mode", mode.name).apply()
+        _themeMode.value = mode
+    }
+
     fun isAutoSyncEnabled(): Boolean = prefs.getBoolean("auto_cloud_sync_enabled", true)
 
     fun setAutoSyncEnabled(enabled: Boolean) {
@@ -47,25 +79,61 @@ class SecurityAndSyncManager(private val context: Context) {
         prefs.edit().putBoolean("biometric_enabled", enabled).apply()
     }
 
+    fun hasPinSet(): Boolean = getStoredPinHash() != null
+
     fun getStoredPinHash(): String? = prefs.getString("user_pin_hash", null)
 
     fun setPin(pin: String) {
         val hash = hashString(pin)
         prefs.edit().putString("user_pin_hash", hash).apply()
+        // If a PIN is explicitly set, enable lock by default
+        setLockEnabled(true)
+    }
+
+    fun clearPin() {
+        prefs.edit().remove("user_pin_hash").apply()
+        setLockEnabled(false)
+    }
+
+    fun isLockedOut(): Boolean {
+        val now = System.currentTimeMillis()
+        return now < lockoutUntilTimestamp
+    }
+
+    fun getLockoutRemainingSeconds(): Int {
+        val now = System.currentTimeMillis()
+        val remaining = (lockoutUntilTimestamp - now) / 1000L
+        return if (remaining > 0) remaining.toInt() else 0
     }
 
     fun verifyPin(pin: String): Boolean {
+        if (isLockedOut()) return false
+
         val stored = getStoredPinHash()
-        val matches = if (stored == null) {
-            // Default PIN is 1234 if no custom PIN has been set
-            pin == "1234"
-        } else {
-            stored == hashString(pin)
-        }
+        // Strictly no default PIN per design spec Section 5.9
+        val matches = stored != null && stored == hashString(pin)
+
         if (matches) {
+            failedPinAttempts = 0
+            lockoutUntilTimestamp = 0L
+            prefs.edit()
+                .putInt("failed_pin_attempts", 0)
+                .putLong("lockout_until_timestamp", 0L)
+                .apply()
             _isAppLocked.value = false
+            return true
+        } else {
+            failedPinAttempts++
+            prefs.edit().putInt("failed_pin_attempts", failedPinAttempts).apply()
+
+            // After 5 failed attempts, impose delay: 30s * (failed - 4)
+            if (failedPinAttempts >= 5) {
+                val delaySeconds = 30L * (failedPinAttempts - 4).coerceAtMost(10)
+                lockoutUntilTimestamp = System.currentTimeMillis() + (delaySeconds * 1000L)
+                prefs.edit().putLong("lockout_until_timestamp", lockoutUntilTimestamp).apply()
+            }
+            return false
         }
-        return matches
     }
 
     fun unlockApp() {
@@ -156,22 +224,22 @@ class SecurityAndSyncManager(private val context: Context) {
         return try {
             val biometricManager = BiometricManager.from(context)
             when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-                BiometricManager.BIOMETRIC_SUCCESS -> "Biometric (Fingerprint/Face) Enrolled & Active"
-                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "Biometric sensor ready, but no Fingerprint/Face enrolled in device Settings"
-                BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "No biometric sensor detected on this device (4-digit PIN fallback active)"
-                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric sensor is temporarily unavailable"
+                BiometricManager.BIOMETRIC_SUCCESS -> "Fingerprint or Face enrolled"
+                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "No fingerprint or face enrolled in device settings"
+                BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "No biometric hardware detected"
+                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric sensor temporarily unavailable"
                 BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> "Security update required for biometric hardware"
                 else -> {
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
                         biometricManager.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS) {
-                        "Device Screen Lock (PIN/Pattern) Active"
+                        "Device screen lock ready"
                     } else {
-                        "PIN Security Active (Default: 1234)"
+                        "PIN security ready"
                     }
                 }
             }
         } catch (_: Throwable) {
-            "PIN Security Active (Default: 1234)"
+            "PIN security ready"
         }
     }
 
@@ -201,11 +269,11 @@ class SecurityAndSyncManager(private val context: Context) {
                         when (errorCode) {
                             BiometricPrompt.ERROR_NEGATIVE_BUTTON,
                             BiometricPrompt.ERROR_USER_CANCELED -> {
-                                onError("Biometric prompt dismissed. Enter 4-digit PIN.")
+                                onError("Enter PIN to unlock.")
                             }
                             BiometricPrompt.ERROR_LOCKOUT,
                             BiometricPrompt.ERROR_LOCKOUT_PERMANENT -> {
-                                onError("Too many biometric attempts. Please enter your 4-digit PIN.")
+                                onError("Too many biometric attempts. Enter PIN.")
                             }
                             else -> {
                                 onError(errString.toString())
@@ -215,7 +283,7 @@ class SecurityAndSyncManager(private val context: Context) {
 
                     override fun onAuthenticationFailed() {
                         super.onAuthenticationFailed()
-                        onError("Biometric authentication not recognized. Please retry or enter PIN.")
+                        onError("Biometric not recognized. Retry or enter PIN.")
                     }
                 }
             )
@@ -232,8 +300,7 @@ class SecurityAndSyncManager(private val context: Context) {
                     BiometricPrompt.PromptInfo.Builder()
                         .setTitle("Unlock Track My Rupee")
                         .setSubtitle("Confirm fingerprint or face recognition")
-                        .setDescription("Verify identity to access your financial transactions & balances")
-                        .setNegativeButtonText("Use App PIN")
+                        .setNegativeButtonText("Use PIN")
                         .setAllowedAuthenticators(
                             if (canWeak) {
                                 BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK
@@ -247,7 +314,6 @@ class SecurityAndSyncManager(private val context: Context) {
                     BiometricPrompt.PromptInfo.Builder()
                         .setTitle("Unlock Track My Rupee")
                         .setSubtitle("Confirm screen lock credentials")
-                        .setDescription("Verify credentials to access your financial ledger")
                         .setAllowedAuthenticators(
                             BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
                         )
@@ -257,15 +323,14 @@ class SecurityAndSyncManager(private val context: Context) {
                     BiometricPrompt.PromptInfo.Builder()
                         .setTitle("Unlock Track My Rupee")
                         .setSubtitle("Fingerprint or Face unlock")
-                        .setDescription("Authenticate to view financial transactions")
                         .setNegativeButtonText("Use PIN")
                         .build()
                 }
             }
 
             prompt.authenticate(promptInfo)
-        } catch (t: Throwable) {
-            onError("Biometric authentication unavailable on this device. Enter PIN.")
+        } catch (_: Throwable) {
+            onError("Biometric unlock unavailable. Enter PIN.")
         }
     }
 

@@ -570,7 +570,7 @@ private fun MonthOverMonthComparisonCard(summary: MonthlySpendingHabitsSummary) 
                 ) {
                     Text(
                         text = "VS",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                         fontWeight = FontWeight.Bold,
                         color = SophisticatedDarkOnSurfaceVariant
                     )
@@ -894,7 +894,7 @@ private fun MetricTileCard(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = title,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                 color = SophisticatedDarkOnSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -909,7 +909,7 @@ private fun MetricTileCard(
             )
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                 color = SophisticatedDarkOnSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1164,7 +1164,7 @@ private fun PaymentAndPeakExpenseCard(summary: MonthlySpendingHabitsSummary) {
                             )
                             Text(
                                 text = "${expense.formattedDate} • ${expense.category}",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                                 color = SophisticatedDarkOnSurfaceVariant
                             )
                         }

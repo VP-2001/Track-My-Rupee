@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -252,14 +253,20 @@ fun BudgetsScreen(
             }
         }
     ) { padding ->
-        LazyColumn(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(MaterialTheme.colorScheme.background)
-                .testTag("budgets_screen"),
-            contentPadding = PaddingValues(bottom = 90.dp)
         ) {
+            val isTablet = maxWidth >= 720.dp
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .testTag("budgets_screen"),
+                contentPadding = PaddingValues(bottom = 90.dp)
+            ) {
             // Header
             item {
                 Row(
@@ -330,7 +337,7 @@ fun BudgetsScreen(
                                             Text(
                                                 text = dueRecurringCount.toString(),
                                                 color = Color.White,
-                                                fontSize = 10.sp,
+                                                fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
@@ -617,7 +624,7 @@ fun BudgetsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                                     ) {
-                                        Text("Test 80% Alert", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text("Test 80% Alert", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
 
                                     OutlinedButton(
@@ -633,7 +640,7 @@ fun BudgetsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                                     ) {
-                                        Text("Test 100% Alert", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text("Test 100% Alert", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
 
@@ -661,7 +668,7 @@ fun BudgetsScreen(
                                     ) {
                                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Evaluate Now", fontSize = 11.sp)
+                                        Text("Evaluate Now", fontSize = 12.sp)
                                     }
 
                                     OutlinedButton(
@@ -677,7 +684,7 @@ fun BudgetsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                                     ) {
-                                        Text("Reset Alert Flags", fontSize = 11.sp)
+                                        Text("Reset Alert Flags", fontSize = 12.sp)
                                     }
                                 }
                             }
@@ -706,6 +713,46 @@ fun BudgetsScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text("No category budgets set yet. Tap + to set one!")
+                        }
+                    }
+                } else if (isTablet) {
+                    items(budgetProgress.chunked(2)) { pair ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                BudgetCategoryCard(
+                                    item = pair[0],
+                                    onEdit = {
+                                        editingCategory = pair[0].category
+                                        editingLimit = pair[0].monthlyLimit
+                                        showBudgetDialog = true
+                                    },
+                                    onDelete = {
+                                        viewModel.deleteBudget(pair[0].category)
+                                    }
+                                )
+                            }
+                            if (pair.size > 1) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    BudgetCategoryCard(
+                                        item = pair[1],
+                                        onEdit = {
+                                            editingCategory = pair[1].category
+                                            editingLimit = pair[1].monthlyLimit
+                                            showBudgetDialog = true
+                                        },
+                                        onDelete = {
+                                            viewModel.deleteBudget(pair[1].category)
+                                        }
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 } else {
@@ -939,6 +986,58 @@ fun BudgetsScreen(
                             }
                         }
                     }
+                } else if (isTablet) {
+                    items(allRecurringExpenses.chunked(2)) { pair ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                RecurringExpenseItemCard(
+                                    item = pair[0],
+                                    onToggleActive = { isActive ->
+                                        viewModel.toggleRecurringExpenseActive(pair[0].id, isActive)
+                                    },
+                                    onPayNow = {
+                                        viewModel.executeRecurringExpenseNow(pair[0].id)
+                                    },
+                                    onEdit = {
+                                        editingRecurringItem = pair[0]
+                                        prefillPreset = null
+                                        showRecurringDialog = true
+                                    },
+                                    onDelete = {
+                                        viewModel.deleteRecurringExpense(pair[0].id)
+                                    }
+                                )
+                            }
+                            if (pair.size > 1) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    RecurringExpenseItemCard(
+                                        item = pair[1],
+                                        onToggleActive = { isActive ->
+                                            viewModel.toggleRecurringExpenseActive(pair[1].id, isActive)
+                                        },
+                                        onPayNow = {
+                                            viewModel.executeRecurringExpenseNow(pair[1].id)
+                                        },
+                                        onEdit = {
+                                            editingRecurringItem = pair[1]
+                                            prefillPreset = null
+                                            showRecurringDialog = true
+                                        },
+                                        onDelete = {
+                                            viewModel.deleteRecurringExpense(pair[1].id)
+                                        }
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
                 } else {
                     items(allRecurringExpenses, key = { it.id }) { recurring ->
                         RecurringExpenseItemCard(
@@ -961,8 +1060,9 @@ fun BudgetsScreen(
                     }
                 }
             }
-        }
-    }
+        } // End LazyColumn
+        } // End BoxWithConstraints
+    } // End Scaffold
 
     // Add / Edit Budget BottomSheet
     if (showBudgetDialog) {

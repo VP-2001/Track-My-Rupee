@@ -249,7 +249,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                             ) {
                                 Text(
                                     text = "Recharts",
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = SophisticatedPrimary,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -306,7 +306,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                         )
                         Text(
                             text = "${monthExpenses.size} txs",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = SophisticatedDarkOnSurfaceVariant
                         )
                     }
@@ -334,7 +334,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                         )
                         Text(
                             text = "Day $currentDayOfMonth of $daysInMonth",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = SophisticatedDarkOnSurfaceVariant
                         )
                     }
@@ -362,7 +362,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                         )
                         Text(
                             text = if (highestDay != null && highestDay.totalAmount > 0) "Day ${highestDay.dayNumber}" else "None",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = SophisticatedDarkOnSurfaceVariant
                         )
                     }
@@ -444,7 +444,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                                         .clip(CircleShape)
                                         .background(SophisticatedPrimary)
                                 )
-                                Text("Spend Curve", fontSize = 11.sp, color = SophisticatedDarkOnSurfaceVariant)
+                                Text("Spend Curve", fontSize = 12.sp, color = SophisticatedDarkOnSurfaceVariant)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Box(
                                     modifier = Modifier
@@ -452,7 +452,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                                         .clip(CircleShape)
                                         .background(AmberGold)
                                 )
-                                Text("Daily Avg", fontSize = 11.sp, color = SophisticatedDarkOnSurfaceVariant)
+                                Text("Daily Avg", fontSize = 12.sp, color = SophisticatedDarkOnSurfaceVariant)
                             }
                         }
 
@@ -550,7 +550,7 @@ fun RechartsDailySpendingLineChart(
                             if (activePoint.topItemTitle.isNotBlank()) {
                                 Text(
                                     text = "Top: ${activePoint.topItemTitle} (${ExpenseEntity.formatInr(activePoint.topItemAmount)})",
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     color = SophisticatedDarkOnSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -567,7 +567,7 @@ fun RechartsDailySpendingLineChart(
                             )
                             Text(
                                 text = "${activePoint.transactionCount} entries",
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 color = SophisticatedDarkOnSurfaceVariant
                             )
                         }
@@ -842,7 +842,7 @@ fun RechartsCategoryPieSection(
                     text = "Tap slices or legend below to explore",
                     style = MaterialTheme.typography.bodySmall,
                     color = SophisticatedDarkOnSurfaceVariant,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
             }
 
@@ -1036,7 +1036,7 @@ fun RechartsCategoryPieSection(
                             text = "${activeItem.transactionCount} transactions recorded",
                             style = MaterialTheme.typography.bodySmall,
                             color = SophisticatedDarkOnSurfaceVariant,
-                            fontSize = 11.sp
+                            fontSize = 12.sp
                         )
                     }
                 }
@@ -1060,7 +1060,7 @@ fun RechartsCategoryPieSection(
                         ) {
                             Text(
                                 text = "View",
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = SophisticatedPrimary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

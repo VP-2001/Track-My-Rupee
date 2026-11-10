@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,21 +52,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.example.security.SecurityAndSyncManager
-import com.example.ui.theme.AmberGold
-import com.example.ui.theme.DangerRed
-import com.example.ui.theme.SophisticatedDarkBackground
-import com.example.ui.theme.SophisticatedDarkBorder
-import com.example.ui.theme.SophisticatedDarkOnSurface
-import com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
-import com.example.ui.theme.SophisticatedDarkSurface
-import com.example.ui.theme.SophisticatedDarkSurfaceDim
-import com.example.ui.theme.SophisticatedDarkSurfaceVariant
-import com.example.ui.theme.SophisticatedPrimary
-import com.example.ui.theme.SophisticatedPrimaryContainer
-import com.example.ui.theme.SuccessGreen
+import com.example.ui.theme.extendedColors
 import com.example.util.findFragmentActivity
+import kotlinx.coroutines.delay
 
 @Composable
 fun AppLockOverlay(
@@ -79,19 +71,28 @@ fun AppLockOverlay(
     var pinInput by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
     var biometricFeedback by remember { mutableStateOf<String?>(null) }
+    var lockoutSeconds by remember { mutableIntStateOf(securityManager.getLockoutRemainingSeconds()) }
     val bioAvailable = remember { securityManager.canUseBiometrics() }
     val bioStatusDescription = remember { securityManager.getBiometricStatusDescription() }
+    val hasPin = remember { securityManager.hasPinSet() }
 
     // Intercept back button to prevent unauthorized bypass of financial data
     BackHandler(enabled = true) {
         fragmentActivity?.moveTaskToBack(true)
     }
 
-    // Automatically prompt BiometricPrompt upon app launch if biometric authentication is available
+    // Lockout countdown timer
+    LaunchedEffect(lockoutSeconds) {
+        if (lockoutSeconds > 0) {
+            delay(1000L)
+            lockoutSeconds = securityManager.getLockoutRemainingSeconds()
+        }
+    }
+
+    // Automatically prompt BiometricPrompt upon app foreground if biometric authentication is available
     LaunchedEffect(fragmentActivity, bioAvailable) {
-        if (fragmentActivity != null && bioAvailable) {
-            // Short delay to ensure activity window is fully foregrounded and ready for BiometricPrompt
-            kotlinx.coroutines.delay(200)
+        if (fragmentActivity != null && bioAvailable && lockoutSeconds == 0) {
+            delay(250)
             if (!fragmentActivity.isFinishing && !fragmentActivity.isDestroyed) {
                 securityManager.authenticateWithBiometrics(
                     activity = fragmentActivity,
@@ -104,15 +105,25 @@ fun AppLockOverlay(
         }
     }
 
+    // If no PIN has been configured at all and lock was somehow active, unlock directly
+    LaunchedEffect(hasPin) {
+        if (!hasPin && !bioAvailable) {
+            securityManager.unlockApp()
+            onUnlocked()
+        }
+    }
+
+    val isLockedOut = lockoutSeconds > 0
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        SophisticatedDarkBackground,
-                        Color(0xFF0D0F14),
-                        SophisticatedDarkBackground
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surfaceDim,
+                        MaterialTheme.colorScheme.background
                     )
                 )
             )
@@ -125,19 +136,22 @@ fun AppLockOverlay(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Glowing Biometric & Shield Emblem
+            // Biometric & Shield Emblem
             Box(
                 modifier = Modifier
                     .size(80.dp)
                     .clip(CircleShape)
-                    .background(SophisticatedDarkSurface)
-                    .border(BorderStroke(2.dp, SophisticatedPrimary.copy(alpha = 0.6f)), CircleShape),
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(
+                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                        CircleShape
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (bioAvailable) Icons.Default.Fingerprint else Icons.Default.Lock,
                     contentDescription = "Lock",
-                    tint = SophisticatedPrimary,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(40.dp)
                 )
             }
@@ -148,23 +162,24 @@ fun AppLockOverlay(
                 text = "Track My Rupee",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
-                color = SophisticatedDarkOnSurface
+                color = MaterialTheme.colorScheme.onSurface
             )
 
+            // Copy change per Section 7: "Track My Rupee is locked"
             Text(
-                text = "Financial Ledger Locked",
+                text = "Track My Rupee is locked",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = SophisticatedPrimary
+                color = MaterialTheme.colorScheme.primary
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Biometric Status Pill
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = SophisticatedDarkSurfaceVariant,
-                border = BorderStroke(1.dp, SophisticatedDarkBorder),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
                 modifier = Modifier.testTag("biometric_status_chip")
             ) {
                 Row(
@@ -174,21 +189,21 @@ fun AppLockOverlay(
                     Icon(
                         imageVector = if (bioAvailable) Icons.Default.Fingerprint else Icons.Default.Security,
                         contentDescription = null,
-                        tint = if (bioAvailable) SuccessGreen else AmberGold,
-                        modifier = Modifier.size(14.dp)
+                        tint = if (bioAvailable) MaterialTheme.extendedColors.income else MaterialTheme.extendedColors.warning,
+                        modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (bioAvailable) "BiometricPrompt API Ready" else bioStatusDescription,
+                        text = if (bioAvailable) "Biometric unlock ready" else bioStatusDescription,
                         style = MaterialTheme.typography.labelSmall,
-                        color = SophisticatedDarkOnSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
             // Error or Biometric Feedback Message
             AnimatedVisibility(
-                visible = biometricFeedback != null,
+                visible = biometricFeedback != null && !isLockedOut,
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
@@ -196,16 +211,34 @@ fun AppLockOverlay(
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = AmberGold.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, AmberGold.copy(alpha = 0.35f))
+                        color = MaterialTheme.extendedColors.warningContainer.copy(alpha = 0.3f),
+                        border = BorderStroke(1.dp, MaterialTheme.extendedColors.warning.copy(alpha = 0.4f))
                     ) {
                         Text(
                             text = biometricFeedback!!,
                             style = MaterialTheme.typography.labelSmall,
-                            color = AmberGold,
+                            color = MaterialTheme.extendedColors.warning,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
+                }
+            }
+
+            // Lockout Countdown Banner
+            if (isLockedOut) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.extendedColors.dangerContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.extendedColors.danger)
+                ) {
+                    Text(
+                        text = "Too many failed attempts. Try again in ${lockoutSeconds}s",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
                 }
             }
 
@@ -220,9 +253,9 @@ fun AppLockOverlay(
                     val isFilled = i < pinInput.length
                     val dotColor by animateColorAsState(
                         targetValue = when {
-                            isError -> DangerRed
-                            isFilled -> SophisticatedPrimary
-                            else -> SophisticatedDarkSurface
+                            isError -> MaterialTheme.extendedColors.danger
+                            isFilled -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.surface
                         },
                         label = "dot_color"
                     )
@@ -239,7 +272,7 @@ fun AppLockOverlay(
                             .border(
                                 BorderStroke(
                                     1.dp,
-                                    if (isFilled) SophisticatedPrimary else SophisticatedDarkBorder
+                                    if (isFilled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 ),
                                 CircleShape
                             )
@@ -248,12 +281,12 @@ fun AppLockOverlay(
                 }
             }
 
-            if (isError) {
+            if (isError && !isLockedOut) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Incorrect PIN. Default PIN is 1234.",
+                    text = "Incorrect PIN. Try again.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = DangerRed,
+                    color = MaterialTheme.extendedColors.danger,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.testTag("incorrect_pin_error")
                 )
@@ -261,11 +294,11 @@ fun AppLockOverlay(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Quick Biometric Trigger Button (Fingerprint or Face)
-            OutlinedButton(
-                onClick = {
-                    if (fragmentActivity != null) {
-                        if (securityManager.canUseBiometrics()) {
+            // Biometric Unlock Button
+            if (bioAvailable && !isLockedOut) {
+                OutlinedButton(
+                    onClick = {
+                        if (fragmentActivity != null) {
                             securityManager.authenticateWithBiometrics(
                                 activity = fragmentActivity,
                                 onSuccess = { onUnlocked() },
@@ -274,42 +307,33 @@ fun AppLockOverlay(
                                     Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                                 }
                             )
-                        } else {
-                            Toast.makeText(
-                                context,
-                                securityManager.getBiometricStatusDescription(),
-                                Toast.LENGTH_LONG
-                            ).show()
                         }
-                    } else {
-                        Toast.makeText(context, "Activity context unavailable. Enter PIN: 1234", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.5.dp, SophisticatedPrimary),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = SophisticatedPrimaryContainer.copy(alpha = 0.2f),
-                    contentColor = SophisticatedPrimary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .height(50.dp)
-                    .testTag("biometric_unlock_button")
-            ) {
-                Icon(
-                    Icons.Default.Fingerprint,
-                    contentDescription = "Biometric Fingerprint / Face Unlock",
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Unlock with Fingerprint / Face",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .height(50.dp)
+                        .testTag("biometric_unlock_button")
+                ) {
+                    Icon(
+                        Icons.Default.Fingerprint,
+                        contentDescription = "Biometric Unlock",
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Unlock with Fingerprint or Face",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             // Numeric Keypad Grid
             val keys = listOf(
@@ -329,7 +353,7 @@ fun AppLockOverlay(
                             "BIO" -> {
                                 IconButton(
                                     onClick = {
-                                        if (fragmentActivity != null) {
+                                        if (fragmentActivity != null && bioAvailable && !isLockedOut) {
                                             securityManager.authenticateWithBiometrics(
                                                 activity = fragmentActivity,
                                                 onSuccess = { onUnlocked() },
@@ -340,6 +364,7 @@ fun AppLockOverlay(
                                             )
                                         }
                                     },
+                                    enabled = bioAvailable && !isLockedOut,
                                     modifier = Modifier
                                         .size(64.dp)
                                         .testTag("keypad_bio_button")
@@ -347,7 +372,7 @@ fun AppLockOverlay(
                                     Icon(
                                         Icons.Default.Fingerprint,
                                         contentDescription = "Biometric",
-                                        tint = SophisticatedPrimary,
+                                        tint = if (bioAvailable && !isLockedOut) MaterialTheme.colorScheme.primary else Color.Transparent,
                                         modifier = Modifier.size(32.dp)
                                     )
                                 }
@@ -355,11 +380,12 @@ fun AppLockOverlay(
                             "DEL" -> {
                                 IconButton(
                                     onClick = {
-                                        if (pinInput.isNotEmpty()) {
+                                        if (pinInput.isNotEmpty() && !isLockedOut) {
                                             pinInput = pinInput.dropLast(1)
                                             isError = false
                                         }
                                     },
+                                    enabled = !isLockedOut,
                                     modifier = Modifier
                                         .size(64.dp)
                                         .testTag("keypad_del_button")
@@ -367,19 +393,19 @@ fun AppLockOverlay(
                                     Icon(
                                         Icons.AutoMirrored.Filled.Backspace,
                                         contentDescription = "Delete",
-                                        tint = SophisticatedDarkOnSurfaceVariant
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                             else -> {
                                 Surface(
                                     shape = CircleShape,
-                                    color = SophisticatedDarkSurfaceDim,
-                                    border = BorderStroke(1.dp, SophisticatedDarkBorder),
+                                    color = MaterialTheme.colorScheme.surfaceDim,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
                                     modifier = Modifier
                                         .size(64.dp)
                                         .testTag("keypad_key_$key")
-                                        .clickable {
+                                        .clickable(enabled = !isLockedOut) {
                                             if (pinInput.length < 4) {
                                                 isError = false
                                                 val updated = pinInput + key
@@ -391,6 +417,7 @@ fun AppLockOverlay(
                                                     } else {
                                                         isError = true
                                                         pinInput = ""
+                                                        lockoutSeconds = securityManager.getLockoutRemainingSeconds()
                                                     }
                                                 }
                                             }
@@ -401,7 +428,7 @@ fun AppLockOverlay(
                                             text = key,
                                             style = MaterialTheme.typography.titleLarge,
                                             fontWeight = FontWeight.Bold,
-                                            color = SophisticatedDarkOnSurface
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
@@ -411,14 +438,6 @@ fun AppLockOverlay(
                 }
                 Spacer(modifier = Modifier.height(10.dp))
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Default PIN: 1234 • Change anytime in Vault Settings",
-                style = MaterialTheme.typography.labelSmall,
-                color = SophisticatedDarkOnSurfaceVariant.copy(alpha = 0.8f)
-            )
         }
     }
 }

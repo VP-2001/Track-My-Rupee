@@ -443,7 +443,7 @@ fun CategoryRadialGaugeCard(
                         text = "used",
                         style = MaterialTheme.typography.labelSmall,
                         color = SophisticatedDarkOnSurfaceVariant,
-                        fontSize = 10.sp
+                        fontSize = 12.sp
                     )
                 }
             }
@@ -453,7 +453,7 @@ fun CategoryRadialGaugeCard(
                 text = "${ExpenseEntity.formatInr(item.spentAmount)} / ${ExpenseEntity.formatInr(item.monthlyLimit)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = SophisticatedDarkOnSurfaceVariant,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 maxLines = 1
             )
 
@@ -490,7 +490,7 @@ fun CategoryRadialGaugeCard(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (isOver) DangerRed else SuccessGreen,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

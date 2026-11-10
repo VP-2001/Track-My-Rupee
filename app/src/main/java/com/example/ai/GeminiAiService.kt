@@ -8,6 +8,7 @@ import com.example.data.model.DefaultCategories
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.MonthlyAiSpendingReport
 import com.example.data.model.RecurringExpenseEntity
+import com.example.ml.OnDeviceMlCategoryClassifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -44,6 +45,8 @@ data class ChatMessage(
 )
 
 class GeminiAiService {
+    var onDeviceClassifier: OnDeviceMlCategoryClassifier? = null
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -56,8 +59,18 @@ class GeminiAiService {
     private val baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
 
     suspend fun suggestCategory(title: String, amount: Double, notes: String): String = withContext(Dispatchers.IO) {
+        // 1. PRIORITIZE ON-DEVICE ML KIT MODEL BEFORE SERVER-SIDE AI PROCESSING
+        val onDevicePrediction = onDeviceClassifier?.predictCategory(title, amount, notes)
+        if (onDevicePrediction != null && onDevicePrediction.isConfident) {
+            android.util.Log.d(
+                "GeminiAiService",
+                "On-Device ML suggested category: ${onDevicePrediction.predictedCategory} (${(onDevicePrediction.confidence * 100).toInt()}% conf) without server API"
+            )
+            return@withContext onDevicePrediction.predictedCategory
+        }
+
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-            return@withContext fallbackLocalCategorize(title)
+            return@withContext onDevicePrediction?.predictedCategory ?: fallbackLocalCategorize(title)
         }
 
         try {
@@ -76,9 +89,9 @@ class GeminiAiService {
 
             val response = executeGeminiPrompt(prompt)
             val matched = DefaultCategories.firstOrNull { response.contains(it, ignoreCase = true) }
-            matched ?: fallbackLocalCategorize(title)
+            matched ?: onDevicePrediction?.predictedCategory ?: fallbackLocalCategorize(title)
         } catch (e: Exception) {
-            fallbackLocalCategorize(title)
+            onDevicePrediction?.predictedCategory ?: fallbackLocalCategorize(title)
         }
     }
 

@@ -582,11 +582,11 @@ private fun LoggedInProfileView(
             if (isSyncing) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Syncing with Firestore...")
+                Text("Syncing…")
             } else {
                 Icon(Icons.Default.Sync, contentDescription = "Sync", modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Force Manual Sync", fontWeight = FontWeight.Bold)
+                Text("Sync now", fontWeight = FontWeight.Bold)
             }
         }
 
@@ -700,13 +700,13 @@ private fun GuestSignInView(
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Guest Session",
+            text = "Using without an account",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = SophisticatedDarkOnSurface
         )
         Text(
-            text = "Local device storage only",
+            text = "Your data stays safely on this device. Sign in to enable cloud sync.",
             style = MaterialTheme.typography.bodySmall,
             color = SophisticatedDarkOnSurfaceVariant
         )

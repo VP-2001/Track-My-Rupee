@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
@@ -188,7 +189,7 @@ fun ExportTransactionsDialog(
                                         )
                                         Text(
                                             text = ExpenseEntity.formatInr(filteredExpenses.sumOf { it.amount }),
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             color = if (!exportAll) Color.Black else SophisticatedDarkOnSurfaceVariant
                                         )
                                     }
@@ -216,7 +217,7 @@ fun ExportTransactionsDialog(
                                         )
                                         Text(
                                             text = ExpenseEntity.formatInr(allExpenses.sumOf { it.amount }),
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             color = if (exportAll) Color.Black else SophisticatedDarkOnSurfaceVariant
                                         )
                                     }
@@ -381,7 +382,44 @@ fun ExportTransactionsDialog(
                         )
                     }
 
-                    // 4. Quick Shortcuts to Monthly & Date Range Reports
+                    // 4. Google Drive Encrypted Backup Card
+                    item {
+                        ExportFormatCard(
+                            badgeText = "GOOGLE DRIVE CLOUD BACKUP",
+                            badgeColor = SophisticatedPrimary,
+                            icon = Icons.Default.CloudUpload,
+                            iconTint = SophisticatedPrimary,
+                            title = "Backup to Google Drive (.enc)",
+                            description = "Encrypted database snapshot with tamper-proof signature ready to upload directly to your Google Drive account, app, or folder.",
+                            onDownload = {
+                                viewModel.backupToGoogleDrive { backupFile ->
+                                    val (saved, msg) = ReportExportManager.saveToDownloads(
+                                        context,
+                                        backupFile,
+                                        "application/octet-stream"
+                                    )
+                                    Toast.makeText(
+                                        context,
+                                        if (saved) "Saved Drive backup to Downloads: ${backupFile.name}" else msg,
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            onShare = {
+                                viewModel.backupToGoogleDrive { backupFile ->
+                                    com.example.security.GoogleDriveBackupManager.uploadFileToGoogleDriveApp(
+                                        context = context,
+                                        file = backupFile,
+                                        subjectTitle = "Expense Ledger Backup ($scopeLabel)"
+                                    )
+                                }
+                            },
+                            downloadTag = "export_drive_download_button",
+                            shareTag = "export_drive_upload_button"
+                        )
+                    }
+
+                    // 5. Quick Shortcuts to Monthly & Date Range Reports
                     item {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
@@ -485,7 +523,7 @@ private fun ExportFormatCard(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = badgeColor,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }

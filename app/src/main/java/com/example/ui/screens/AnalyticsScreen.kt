@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -103,13 +104,19 @@ fun AnalyticsScreen(
     var showHabitsSheet by remember { mutableStateOf(false) }
     val totalPeriodSpent = filteredExpenses.sumOf { it.amount }
 
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .testTag("analytics_screen"),
-        contentPadding = PaddingValues(bottom = 90.dp)
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.TopCenter
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 1100.dp)
+                .testTag("analytics_screen"),
+            contentPadding = PaddingValues(bottom = 90.dp)
+        ) {
         // Header & Share
         item {
             Row(
@@ -521,4 +528,5 @@ fun AnalyticsScreen(
             viewModel = viewModel
         )
     }
+    } // End Box
 }

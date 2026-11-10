@@ -521,21 +521,18 @@ fun ChatMessageBubble(message: ChatMessage) {
                     Text(
                         text = message.modelTier.badge,
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = SophisticatedPrimary
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Text(
                         text = "•",
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = SophisticatedDarkOnSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Text(
                     text = timeFormatted,
                     style = MaterialTheme.typography.labelSmall,
-                    fontSize = 10.sp,
-                    color = SophisticatedDarkOnSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -802,8 +799,8 @@ fun AdvisorFinancialContextCard(
                                         Text(
                                             text = "${cat.transactionCount} txns",
                                             style = MaterialTheme.typography.labelSmall,
-                                            fontSize = 9.sp,
-                                            color = SophisticatedDarkOnSurfaceVariant,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                                         )
                                     }

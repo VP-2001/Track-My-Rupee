@@ -207,7 +207,7 @@ fun MonthlyExpenseReportDialog(
                                     Text(
                                         text = if (m.count > 0) "${m.count} txs • ${ExpenseEntity.formatInr(m.totalSpent)}" else "No entries",
                                         style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 10.sp,
+                                        fontSize = 12.sp,
                                         color = if (isSelected) Color.Black else SophisticatedDarkOnSurfaceVariant
                                     )
                                 }

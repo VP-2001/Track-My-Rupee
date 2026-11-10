@@ -402,7 +402,7 @@ fun RechartsBudgetTrendDashboard(
                         Text(
                             text = "${String.format(Locale.getDefault(), "%.0f", activeSummary.adherenceRatePercent)}% in budget",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = onSurfaceVariant
                         )
                     }
@@ -434,7 +434,7 @@ fun RechartsBudgetTrendDashboard(
                         Text(
                             text = if (activeSummary.netSavings >= 0) "Under overall budget" else "Exceeded budget",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = if (activeSummary.netSavings >= 0) underBudgetGreen else overBudgetRed
                         )
                     }
@@ -463,7 +463,7 @@ fun RechartsBudgetTrendDashboard(
                         Text(
                             text = "Avg spend: ${ExpenseEntity.formatInr(activeSummary.averageMonthlySpend)}",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = onSurfaceVariant

@@ -38,6 +38,9 @@ import com.example.data.model.MonthlySpendingHabitsSummary
 import com.example.data.model.MonthlyTrendData
 import com.example.data.model.OneYearGrowthSummary
 import com.example.data.model.PaymentMethodSummary
+import com.example.ml.OnDeviceMlCategoryClassifier
+import com.example.ml.MlCategoryPrediction
+import com.example.ml.MlModelMetadata
 import com.example.data.model.RecurringDateUtils
 import com.example.data.model.RecurringExpenseEntity
 import com.example.data.model.RecurringFrequency
@@ -147,6 +150,19 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     private val db = ExpenseDatabase.getDatabase(application)
     val repository = ExpenseRepository(db.expenseDao(), db.budgetDao(), db.syncLogDao(), db.recurringExpenseDao())
     val geminiService = GeminiAiService()
+    val onDeviceClassifier = OnDeviceMlCategoryClassifier()
+    private val _onDeviceMlStats = MutableStateFlow(onDeviceClassifier.getModelMetadata())
+    val onDeviceMlStats: StateFlow<MlModelMetadata> = _onDeviceMlStats.asStateFlow()
+
+    fun predictCategoryOnDevice(title: String, amount: Double = 0.0, notes: String = ""): MlCategoryPrediction {
+        return onDeviceClassifier.predictCategory(title, amount, notes)
+    }
+
+    fun retrainOnDeviceMlModel() {
+        val all = allExpenses.value
+        onDeviceClassifier.trainFromHistoricalExpenses(all)
+        _onDeviceMlStats.value = onDeviceClassifier.getModelMetadata()
+    }
     val securityManager = SecurityAndSyncManager(application)
     val cardSuggestionsManager = CreditCardSuggestionsManager(application)
     val cardSuggestions: StateFlow<List<CreditCardSuggestion>> = cardSuggestionsManager.suggestions
@@ -253,7 +269,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 val user = result.getOrNull()
                 val name = user?.displayName ?: "User"
                 val email = user?.email ?: ""
-                _syncMessage.value = "Signed in as $name. Syncing with Firestore..."
+                _syncMessage.value = "Signed in as $name. Syncing…"
                 securityManager.signInGoogle(email)
                 repository.addSyncLog("SIGN_IN", 0, "SUCCESS", email, "Connected Google Account: $name ($email)")
                 // Automatically synchronize local Room DB records with Firebase Firestore
@@ -939,6 +955,17 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
 
 
     init {
+        // Wire On-Device ML model into GeminiAiService to prioritize local inference before remote API calls
+        geminiService.onDeviceClassifier = onDeviceClassifier
+
+        // Continuous on-device training: re-train category patterns whenever Room database changes
+        viewModelScope.launch {
+            repository.allExpenses.collect { expenses ->
+                onDeviceClassifier.trainFromHistoricalExpenses(expenses)
+                _onDeviceMlStats.value = onDeviceClassifier.getModelMetadata()
+            }
+        }
+
         viewModelScope.launch {
             // Check and automatically create entries for any due recurring bills
             val created = repository.processDueRecurringExpenses()

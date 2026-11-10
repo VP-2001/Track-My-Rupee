@@ -22,11 +22,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
@@ -59,6 +61,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -164,6 +168,27 @@ fun AddEditExpenseBottomSheet(
     var autoRecordRecurring by remember { mutableStateOf(true) }
 
     var isAiCategorizing by remember { mutableStateOf(false) }
+    val onDevicePrediction by remember(title, amountText, notes) {
+        derivedStateOf {
+            val amt = amountText.toDoubleOrNull() ?: 0.0
+            if (title.isNotBlank()) {
+                viewModel.predictCategoryOnDevice(title, amt, notes)
+            } else {
+                null
+            }
+        }
+    }
+    var userManuallySelectedCategory by remember { mutableStateOf(expenseToEdit != null) }
+    var autoSelectedCategoryMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(onDevicePrediction) {
+        val pred = onDevicePrediction
+        if (pred != null && pred.confidence >= 0.75f && !userManuallySelectedCategory) {
+            selectedCategory = pred.predictedCategory
+            autoSelectedCategoryMessage = "Auto-selected via On-Device ML (${(pred.confidence * 100).toInt()}% match)"
+        }
+    }
+
     val cardSuggestions by viewModel.cardSuggestions.collectAsStateWithLifecycle()
     var showEditCardSuggestionsDialog by remember { mutableStateOf(false) }
 
@@ -287,12 +312,32 @@ fun AddEditExpenseBottomSheet(
                 IconButton(
                     onClick = {
                         if (title.isNotBlank()) {
-                            isAiCategorizing = true
-                            coroutineScope.launch {
-                                val amt = amountText.toDoubleOrNull() ?: 0.0
-                                val suggested = viewModel.geminiService.suggestCategory(title, amt, notes)
-                                selectedCategory = suggested
-                                isAiCategorizing = false
+                            val amt = amountText.toDoubleOrNull() ?: 0.0
+                            // 1. Check On-Device ML model first before server API
+                            val mlPrediction = viewModel.predictCategoryOnDevice(title, amt, notes)
+                            if (mlPrediction.isConfident) {
+                                selectedCategory = mlPrediction.predictedCategory
+                                userManuallySelectedCategory = true
+                                autoSelectedCategoryMessage = null
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "⚡ Applied '${mlPrediction.predictedCategory}' (${(mlPrediction.confidence * 100).toInt()}% match) via On-Device ML",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                isAiCategorizing = true
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Consulting Gemini AI...",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                coroutineScope.launch {
+                                    val suggested = viewModel.geminiService.suggestCategory(title, amt, notes)
+                                    selectedCategory = suggested
+                                    userManuallySelectedCategory = true
+                                    autoSelectedCategoryMessage = null
+                                    isAiCategorizing = false
+                                }
                             }
                         }
                     },
@@ -300,11 +345,17 @@ fun AddEditExpenseBottomSheet(
                         .size(48.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .testTag("on_device_auto_categorize_button")
                 ) {
                     if (isAiCategorizing) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI Auto Category", tint = MaterialTheme.colorScheme.secondary)
+                        val pred = onDevicePrediction
+                        if (pred != null && pred.isConfident) {
+                            Icon(Icons.Default.Bolt, contentDescription = "Auto-Categorize via On-Device ML", tint = MaterialTheme.colorScheme.primary)
+                        } else {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "Categorize with Gemini AI", tint = MaterialTheme.colorScheme.secondary)
+                        }
                     }
                 }
             }
@@ -360,6 +411,132 @@ fun AddEditExpenseBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // On-Device ML Category Suggestion Badge (Real-time pattern match)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = onDevicePrediction != null && onDevicePrediction!!.isConfident
+            ) {
+                onDevicePrediction?.let { pred ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                            .clickable { selectedCategory = pred.predictedCategory }
+                            .testTag("on_device_ml_suggestion_card")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bolt,
+                                        contentDescription = "On-Device ML",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "On-Device ML: ",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = pred.predictedCategory,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        ) {
+                                            Text(
+                                                text = "${(pred.confidence * 100).toInt()}% match",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = pred.explanation,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    selectedCategory = pred.predictedCategory
+                                    userManuallySelectedCategory = true
+                                    autoSelectedCategoryMessage = null
+                                },
+                                modifier = Modifier.testTag("apply_on_device_ml_category_btn")
+                            ) {
+                                Text("Apply", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-Selected ML Category Pill Banner
+            if (autoSelectedCategoryMessage != null && onDevicePrediction != null && onDevicePrediction!!.confidence >= 0.75f) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.18f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                        .testTag("auto_selected_ml_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Bolt, contentDescription = null, tint = com.example.ui.theme.SophisticatedPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = autoSelectedCategoryMessage!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = com.example.ui.theme.SophisticatedPrimary
+                            )
+                        }
+                        Text(
+                            text = "Tap to change",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Category Selector Chips
             Text("Category", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(6.dp))
@@ -370,10 +547,32 @@ fun AddEditExpenseBottomSheet(
             ) {
                 DefaultCategories.forEach { cat ->
                     val isSelected = selectedCategory.equals(cat, ignoreCase = true)
+                    val isMlSuggested = onDevicePrediction != null && onDevicePrediction!!.isConfident && onDevicePrediction!!.predictedCategory.equals(cat, ignoreCase = true)
                     FilterChip(
                         selected = isSelected,
-                        onClick = { selectedCategory = cat },
-                        label = { Text(cat, style = MaterialTheme.typography.bodySmall) }
+                        onClick = {
+                            selectedCategory = cat
+                            userManuallySelectedCategory = true
+                            autoSelectedCategoryMessage = null
+                        },
+                        leadingIcon = if (isMlSuggested) {
+                            {
+                                Icon(
+                                    Icons.Default.Bolt,
+                                    contentDescription = "ML Suggestion",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else null,
+                        label = {
+                            Text(
+                                text = if (isMlSuggested) "$cat ✨" else cat,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (isMlSuggested) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        modifier = Modifier.testTag("category_chip_${cat.replace(" ", "_").replace("&", "and")}")
                     )
                 }
             }
@@ -685,7 +884,7 @@ fun AddEditExpenseBottomSheet(
                                     FilterChip(
                                         selected = recurringFrequency == f,
                                         onClick = { recurringFrequency = f },
-                                        label = { Text(label, fontSize = 11.sp) },
+                                        label = { Text(label, fontSize = 12.sp) },
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -744,7 +943,7 @@ fun AddEditExpenseBottomSheet(
                                         FilterChip(
                                             selected = recurringDayOfWeek == num,
                                             onClick = { recurringDayOfWeek = num },
-                                            label = { Text(name, fontSize = 11.sp) },
+                                            label = { Text(name, fontSize = 12.sp) },
                                             modifier = Modifier.weight(1f)
                                         )
                                     }
@@ -765,13 +964,13 @@ fun AddEditExpenseBottomSheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 listOf("Subscription", "Rent", "Fixed Bill", "EMI", "Insurance", "Utility").forEach { t ->
                                     FilterChip(
                                         selected = recurringTag == t,
                                         onClick = { recurringTag = t },
-                                        label = { Text(t, fontSize = 11.sp) }
+                                        label = { Text(t, fontSize = 12.sp) }
                                     )
                                 }
                             }

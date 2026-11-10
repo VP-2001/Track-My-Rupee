@@ -112,6 +112,30 @@ object GoogleDriveBackupManager {
     }
 
     /**
+     * Reads encrypted backup bytes from a user-selected Google Drive document URI via Storage Access Framework (SAF).
+     */
+    fun readBackupFromSafUri(
+        context: Context,
+        sourceUri: Uri
+    ): ByteArray? {
+        return try {
+            context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
+                inputStream.readBytes()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Google Drive API endpoints and scopes.
+     */
+    const val DRIVE_APPDATA_FOLDER = "appDataFolder"
+    const val DRIVE_MIME_TYPE_OCTET = "application/octet-stream"
+    const val DRIVE_API_FILES_URL = "https://www.googleapis.com/drive/v3/files"
+    const val DRIVE_UPLOAD_MULTIPART_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+
+    /**
      * Generates standard suggested file name for Google Drive backups.
      */
     fun generateSuggestedDriveBackupFileName(): String {

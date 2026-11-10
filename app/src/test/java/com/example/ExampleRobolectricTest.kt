@@ -566,14 +566,15 @@ class ExampleRobolectricTest {
     assertTrue("App lock should be enabled by default", securityManager.isLockEnabled())
     assertTrue("App should start locked", securityManager.isAppLocked.value)
 
-    // Incorrect PIN does not unlock
+    // Incorrect PIN does not unlock (no default PIN without explicit setup)
     val wrongPinSuccess = securityManager.verifyPin("9999")
     org.junit.Assert.assertFalse("Wrong PIN should fail", wrongPinSuccess)
     assertTrue("App should remain locked", securityManager.isAppLocked.value)
 
-    // Default PIN 1234 unlocks
+    // Set PIN and verify
+    securityManager.setPin("1234")
     val rightPinSuccess = securityManager.verifyPin("1234")
-    assertTrue("Correct default PIN should verify", rightPinSuccess)
+    assertTrue("Configured PIN should verify", rightPinSuccess)
     org.junit.Assert.assertFalse("App should be unlocked", securityManager.isAppLocked.value)
 
     // Lock again
@@ -1588,6 +1589,112 @@ class ExampleRobolectricTest {
     vm.selectMonthForLedger(2025, 5)
     assertEquals(com.example.ui.viewmodel.DateFilterType.CUSTOM, vm.dateFilter.value)
     assertNotNull(vm.customDateRange.value)
+  }
+
+  @Test
+  fun `onDeviceMlClassifier predicts semantic categories accurately without server API`() {
+    val classifier = com.example.ml.OnDeviceMlCategoryClassifier()
+
+    // Food & Dining
+    val foodPred = classifier.predictCategory("Swiggy Dinner Order", 450.0, "Biryani")
+    assertTrue("Should be confident", foodPred.isConfident)
+    assertEquals("Food & Dining", foodPred.predictedCategory)
+    assertTrue("Confidence should be high (> 70%)", foodPred.confidence >= 0.70f)
+
+    // Groceries
+    val groceryPred = classifier.predictCategory("Blinkit Supermarket", 820.0, "Milk and bread")
+    assertTrue("Should be confident", groceryPred.isConfident)
+    assertEquals("Groceries", groceryPred.predictedCategory)
+
+    // Travel & Transport
+    val travelPred = classifier.predictCategory("Shell Petrol Fuel Bunk", 1500.0, "Petrol refill")
+    assertTrue("Should be confident", travelPred.isConfident)
+    assertEquals("Travel & Transport", travelPred.predictedCategory)
+
+    // Bills & Utilities
+    val billPred = classifier.predictCategory("Airtel Broadband Wifi Bill", 1180.0, "Monthly internet")
+    assertTrue("Should be confident", billPred.isConfident)
+    assertEquals("Bills & Utilities", billPred.predictedCategory)
+  }
+
+  @Test
+  fun `onDeviceMlClassifier learns custom merchant category patterns from historical Room expenses`() {
+    val classifier = com.example.ml.OnDeviceMlCategoryClassifier()
+
+    // Initially custom merchant is unknown
+    val initial = classifier.predictCategory("Sharma Tailors & Drapers", 1200.0)
+    // Now train the model with historical expenses
+    val historicalList = listOf(
+      ExpenseEntity(
+        id = 101,
+        title = "Sharma Tailors",
+        amount = 1200.0,
+        category = "Shopping",
+        date = System.currentTimeMillis() - 86400000L,
+        paymentMethod = "UPI",
+        tag = "Personal",
+        notes = "Custom shirt stitching"
+      ),
+      ExpenseEntity(
+        id = 102,
+        title = "Sharma Tailors",
+        amount = 800.0,
+        category = "Shopping",
+        date = System.currentTimeMillis() - 172800000L,
+        paymentMethod = "UPI",
+        tag = "Personal",
+        notes = "Pants alteration"
+      ),
+      ExpenseEntity(
+        id = 103,
+        title = "Sharma Tailors Shop",
+        amount = 1500.0,
+        category = "Shopping",
+        date = System.currentTimeMillis() - 259200000L,
+        paymentMethod = "UPI",
+        tag = "Personal",
+        notes = "Suit fabric"
+      )
+    )
+
+    classifier.trainFromHistoricalExpenses(historicalList)
+    val metadata = classifier.getModelMetadata()
+    assertEquals(3, metadata.trainedTransactionsCount)
+    assertTrue("Should have learned merchants", metadata.uniqueMerchantsCount > 0)
+
+    // Test prediction on new transaction with learned merchant
+    val learnedPred = classifier.predictCategory("Sharma Tailors", 950.0)
+    assertTrue("Learned merchant should be confident", learnedPred.isConfident)
+    assertEquals("Shopping", learnedPred.predictedCategory)
+    assertEquals(com.example.ml.PredictionSource.ON_DEVICE_HISTORICAL_ML, learnedPred.source)
+    assertTrue(learnedPred.confidence >= 0.75f)
+  }
+
+  @Test
+  fun `GeminiAiService suggestCategory uses on-device ML model before remote API call`() = runBlocking {
+    val gemini = com.example.ai.GeminiAiService()
+    val classifier = com.example.ml.OnDeviceMlCategoryClassifier()
+    gemini.onDeviceClassifier = classifier
+
+    // Even with empty/invalid API key, on-device ML resolves the category with zero network calls
+    val result = gemini.suggestCategory("Starbucks Coffee", 350.0, "Morning espresso")
+    assertEquals("Food & Dining", result)
+
+    val travelResult = gemini.suggestCategory("Uber Cab ride to airport", 550.0, "Taxi ride")
+    assertEquals("Travel & Transport", travelResult)
+  }
+
+  @Test
+  fun `ExpenseViewModel predictCategoryOnDevice returns confident prediction and updates model stats`() {
+    val application = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val vm = com.example.ui.viewmodel.ExpenseViewModel(application)
+
+    val prediction = vm.predictCategoryOnDevice("Zomato Pizza Delivery", 420.0, "Margherita pizza")
+    assertTrue(prediction.isConfident)
+    assertEquals("Food & Dining", prediction.predictedCategory)
+
+    val stats = vm.onDeviceMlStats.value
+    assertNotNull(stats)
   }
 }
 

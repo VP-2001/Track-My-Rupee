@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -8,90 +9,96 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.ExtractedTransaction
 import com.example.data.model.ExpenseEntity
-import com.example.ui.components.AccountBottomSheet
 import com.example.ui.components.AddEditExpenseBottomSheet
 import com.example.ui.components.ProfileAvatarButton
 import com.example.ui.components.VoiceExpenseDialog
-import com.example.ui.screens.AiChatScreen
-import com.example.ui.theme.AmberGold
-import com.example.ui.screens.AiToolsScreen
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.AppLockOverlay
+import com.example.ui.screens.AskAiScreen
 import com.example.ui.screens.BudgetsScreen
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.ReceiptScanScreen
-import com.example.ui.screens.ReportsScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.TransactionsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.ExpenseViewModel
-import androidx.compose.material.icons.filled.QrCodeScanner
 
+// Section 4 Information Architecture:
+// 5 core tabs: Home, Ledger, Insights, Budgets, Ask AI
 enum class NavigationScreen(val label: String, val icon: ImageVector) {
-    DASHBOARD("Home", Icons.Default.Dashboard),
-    TRANSACTIONS("Ledger", Icons.AutoMirrored.Filled.ReceiptLong),
-    ANALYTICS("Charts", Icons.Default.PieChart),
+    HOME("Home", Icons.Default.Dashboard),
+    LEDGER("Ledger", Icons.AutoMirrored.Filled.ReceiptLong),
+    INSIGHTS("Insights", Icons.Default.PieChart),
     BUDGETS("Budgets", Icons.Default.AccountBalanceWallet),
-    AI_ADVISOR("Advisor", Icons.AutoMirrored.Filled.Chat),
-    AI_TOOLS("Tools", Icons.Default.AutoAwesome),
-    REPORTS("Backup", Icons.Default.Security),
+    ASK_AI("Ask AI", Icons.Default.AutoAwesome),
+    SETTINGS("Settings", Icons.Default.Settings),
     RECEIPT_SCAN("Scan", Icons.Default.QrCodeScanner)
 }
 
-
 class MainActivity : FragmentActivity() {
     private val viewModel: ExpenseViewModel by viewModels()
-    private val targetScreenState = androidx.compose.runtime.mutableStateOf(NavigationScreen.DASHBOARD)
+    private val targetScreenState = androidx.compose.runtime.mutableStateOf(NavigationScreen.HOME)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleIntent(intent)
         setContent {
-            MyApplicationTheme {
+            val themeMode by viewModel.securityManager.themeMode.collectAsStateWithLifecycle()
+            MyApplicationTheme(themeMode = themeMode) {
                 ExpenseTrackerApp(
                     viewModel = viewModel,
                     initialScreen = targetScreenState.value
@@ -120,20 +127,19 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         try {
-            // Record timestamp when app is backgrounded or minimized
             viewModel.securityManager.onAppBackgrounded()
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Error in onStop: ${e.message}", e)
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
     }
 
-    private fun handleIntent(intent: android.content.Intent?) {
+    private fun handleIntent(intent: Intent?) {
         if (intent?.getStringExtra("navigate_to") == "budgets") {
             targetScreenState.value = NavigationScreen.BUDGETS
         }
@@ -143,181 +149,248 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun ExpenseTrackerApp(
     viewModel: ExpenseViewModel,
-    initialScreen: NavigationScreen = NavigationScreen.DASHBOARD
+    initialScreen: NavigationScreen = NavigationScreen.HOME
 ) {
-    val isLocked by viewModel.securityManager.isAppLocked.collectAsStateWithLifecycle()
+    val securityManager = viewModel.securityManager
+    val isLocked by securityManager.isAppLocked.collectAsStateWithLifecycle()
+    val hasCompletedOnboarding by securityManager.hasCompletedOnboarding.collectAsStateWithLifecycle()
 
     var currentScreen by remember { mutableStateOf(initialScreen) }
 
-    androidx.compose.runtime.LaunchedEffect(initialScreen) {
-        if (initialScreen != NavigationScreen.DASHBOARD) {
+    LaunchedEffect(initialScreen) {
+        if (initialScreen != NavigationScreen.HOME) {
             currentScreen = initialScreen
         }
     }
 
-    var aiToolsTab by remember { mutableIntStateOf(0) }
-
-    var isAccountSheetOpen by remember { mutableStateOf(false) }
     var isAddExpenseOpen by remember { mutableStateOf(false) }
     var isVoiceExpenseDialogOpen by remember { mutableStateOf(false) }
     var expenseToEdit by remember { mutableStateOf<ExpenseEntity?>(null) }
     var preFillTransaction by remember { mutableStateOf<ExtractedTransaction?>(null) }
 
-    val isCameraScanning = currentScreen == NavigationScreen.RECEIPT_SCAN
+    // 1. Onboarding check (first launch only)
+    if (!hasCompletedOnboarding) {
+        OnboardingScreen(
+            viewModel = viewModel,
+            securityManager = securityManager,
+            onComplete = {
+                currentScreen = NavigationScreen.HOME
+            }
+        )
+        return
+    }
 
+    // 2. Lock screen check
     if (isLocked) {
         AppLockOverlay(
-            securityManager = viewModel.securityManager,
-            onUnlocked = { viewModel.securityManager.unlockApp() }
+            securityManager = securityManager,
+            onUnlocked = { securityManager.unlockApp() }
         )
-    } else {
-        BackHandler(enabled = currentScreen != NavigationScreen.DASHBOARD) {
-            currentScreen = NavigationScreen.DASHBOARD
-        }
+        return
+    }
 
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            topBar = {
-                if (!isCameraScanning) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.background,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .statusBarsPadding()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Track My Rupee",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+    // 3. Main Navigation
+    BackHandler(enabled = currentScreen != NavigationScreen.HOME) {
+        currentScreen = NavigationScreen.HOME
+    }
 
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+    // Five core tabs per Section 4
+    val coreNavItems = listOf(
+        NavigationScreen.HOME,
+        NavigationScreen.LEDGER,
+        NavigationScreen.INSIGHTS,
+        NavigationScreen.BUDGETS,
+        NavigationScreen.ASK_AI
+    )
+
+    val isFullScreenOverlay = currentScreen == NavigationScreen.SETTINGS || currentScreen == NavigationScreen.RECEIPT_SCAN
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isTablet = maxWidth >= 600.dp
+
+        if (isTablet) {
+            // Tablet Canonical Layout: Left NavigationRail + Right Content Workspace
+            Row(modifier = Modifier.fillMaxSize()) {
+                if (!isFullScreenOverlay) {
+                    NavigationRail(
+                        containerColor = MaterialTheme.colorScheme.surfaceDim,
+                        header = {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
                             ) {
-                                androidx.compose.material3.IconButton(
-                                    onClick = { currentScreen = NavigationScreen.RECEIPT_SCAN },
-                                    modifier = Modifier.testTag("topbar_scan_receipt_button")
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(42.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.QrCodeScanner,
-                                        contentDescription = "Scan Paper Receipt",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "₹",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                // Top Add button per Section 4 tablet spec
+                                FloatingActionButton(
+                                    onClick = {
+                                        expenseToEdit = null
+                                        preFillTransaction = null
+                                        isAddExpenseOpen = true
+                                    },
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .testTag("tablet_add_expense_fab")
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add Expense")
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("tablet_navigation_rail")
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxHeight(),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                coreNavItems.forEach { screen ->
+                                    val isSelected = currentScreen == screen
+                                    NavigationRailItem(
+                                        selected = isSelected,
+                                        onClick = { currentScreen = screen },
+                                        icon = {
+                                            Icon(
+                                                imageVector = screen.icon,
+                                                contentDescription = screen.label,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = screen.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        },
+                                        colors = NavigationRailItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                        )
                                     )
                                 }
+                            }
 
-                                if (viewModel.securityManager.isLockEnabled()) {
+                            // Bottom actions on the tablet rail
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            ) {
+                                if (securityManager.isLockEnabled()) {
                                     androidx.compose.material3.IconButton(
-                                        onClick = { viewModel.securityManager.lockApp() },
+                                        onClick = { securityManager.lockApp() },
                                         modifier = Modifier.testTag("quick_lock_button")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = "Lock Ledger Now",
+                                            Icons.Default.Lock,
+                                            contentDescription = "Lock App",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
-
                                 ProfileAvatarButton(
                                     viewModel = viewModel,
-                                    onClick = { isAccountSheetOpen = true }
+                                    onClick = { currentScreen = NavigationScreen.SETTINGS }
                                 )
                             }
                         }
                     }
                 }
-            },
-            bottomBar = {
-                if (!isCameraScanning) {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surfaceDim,
-                        tonalElevation = 0.dp,
-                        modifier = Modifier.testTag("bottom_nav_bar")
-                    ) {
-                    val navItems = listOf(
-                        NavigationScreen.DASHBOARD,
-                        NavigationScreen.TRANSACTIONS,
-                        NavigationScreen.ANALYTICS,
-                        NavigationScreen.BUDGETS,
-                        NavigationScreen.AI_ADVISOR,
-                        NavigationScreen.AI_TOOLS,
-                        NavigationScreen.REPORTS
-                    )
 
-                    navItems.forEach { screen ->
-                        val isSelected = currentScreen == screen
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = { currentScreen = screen },
-                            icon = {
-                                Icon(
-                                    imageVector = screen.icon,
-                                    contentDescription = screen.label,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = screen.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                            )
-                        )
-                    }
+                // Tablet Content Workspace
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                    RenderScreen(
+                        currentScreen = currentScreen,
+                        viewModel = viewModel,
+                        onNavigate = { currentScreen = it },
+                        onAddExpense = {
+                            expenseToEdit = null
+                            preFillTransaction = null
+                            isAddExpenseOpen = true
+                        },
+                        onVoiceExpense = { isVoiceExpenseDialogOpen = true },
+                        onEditExpense = { exp ->
+                            expenseToEdit = exp
+                            preFillTransaction = null
+                            isAddExpenseOpen = true
+                        },
+                        onOpenSettings = { currentScreen = NavigationScreen.SETTINGS }
+                    )
                 }
             }
-        },
-            floatingActionButton = {
-                if (!isCameraScanning && currentScreen == NavigationScreen.DASHBOARD) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Voice-to-Text Input FAB to quickly add new expenses
-                        FloatingActionButton(
-                            onClick = { isVoiceExpenseDialogOpen = true },
-                            containerColor = AmberGold,
-                            contentColor = Color.Black,
-                            shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.testTag("voice_expense_fab")
+        } else {
+            // Smartphone Layout: Top Bar (only when on secondary screens) + Content + 5-Tab Bottom Bar
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                bottomBar = {
+                    if (!isFullScreenOverlay) {
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surfaceDim,
+                            tonalElevation = 0.dp,
+                            modifier = Modifier.testTag("bottom_nav_bar")
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Voice Input to Add Expense",
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Text(
-                                    text = "Voice Add",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold
+                            coreNavItems.forEach { screen ->
+                                val isSelected = currentScreen == screen
+                                NavigationBarItem(
+                                    selected = isSelected,
+                                    onClick = { currentScreen = screen },
+                                    alwaysShowLabel = true, // Labels always visible per Section 4
+                                    icon = {
+                                        Icon(
+                                            imageVector = screen.icon,
+                                            contentDescription = screen.label,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            text = screen.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontSize = 12.sp, // Minimum 12sp per Section 3 & 4
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1
+                                        )
+                                    },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                    )
                                 )
                             }
                         }
-
-                        // Standard manual Add FAB
+                    }
+                },
+                // Section 5.2: "No FAB on Home, because the quick actions replace it. Elsewhere, one FAB (Add) on Ledger only."
+                floatingActionButton = {
+                    if (!isFullScreenOverlay && currentScreen == NavigationScreen.LEDGER) {
                         FloatingActionButton(
                             onClick = {
                                 expenseToEdit = null
@@ -327,150 +400,128 @@ fun ExpenseTrackerApp(
                             containerColor = MaterialTheme.colorScheme.primary,
                             contentColor = MaterialTheme.colorScheme.onPrimary,
                             shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.testTag("add_expense_fab")
+                            modifier = Modifier.testTag("ledger_add_expense_fab")
                         ) {
                             Icon(Icons.Default.Add, contentDescription = "Add Expense")
                         }
                     }
-                } else if (currentScreen == NavigationScreen.TRANSACTIONS) {
-                    FloatingActionButton(
-                        onClick = {
-                            expenseToEdit = null
-                            preFillTransaction = null
-                            isAddExpenseOpen = true
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier.testTag("add_expense_fab")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Expense")
-                    }
                 }
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                when (currentScreen) {
-                    NavigationScreen.DASHBOARD -> DashboardScreen(
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    RenderScreen(
+                        currentScreen = currentScreen,
                         viewModel = viewModel,
-                        onNavigateToTransactions = { currentScreen = NavigationScreen.TRANSACTIONS },
-                        onNavigateToAnalytics = { currentScreen = NavigationScreen.ANALYTICS },
-                        onNavigateToBudgets = { currentScreen = NavigationScreen.BUDGETS },
-                        onNavigateToAiTools = { tool ->
-                            if (tool == "scan") {
-                                currentScreen = NavigationScreen.RECEIPT_SCAN
-                            } else {
-                                aiToolsTab = when (tool) {
-                                    "statement" -> 1
-                                    "voice" -> 2
-                                    else -> 0
-                                }
-                                currentScreen = NavigationScreen.AI_TOOLS
-                            }
-                        },
-                        onNavigateToReports = { currentScreen = NavigationScreen.REPORTS },
-                        onAddExpenseClick = {
+                        onNavigate = { currentScreen = it },
+                        onAddExpense = {
                             expenseToEdit = null
                             preFillTransaction = null
                             isAddExpenseOpen = true
                         },
-                        onEditExpenseClick = { exp ->
+                        onVoiceExpense = { isVoiceExpenseDialogOpen = true },
+                        onEditExpense = { exp ->
                             expenseToEdit = exp
                             preFillTransaction = null
                             isAddExpenseOpen = true
                         },
-                        onOpenAccountSheet = { isAccountSheetOpen = true }
-                    )
-
-                    NavigationScreen.TRANSACTIONS -> TransactionsScreen(
-                        viewModel = viewModel,
-                        onEditExpenseClick = { exp ->
-                            expenseToEdit = exp
-                            preFillTransaction = null
-                            isAddExpenseOpen = true
-                        }
-                    )
-
-                    NavigationScreen.ANALYTICS -> AnalyticsScreen(
-                        viewModel = viewModel,
-                        onNavigateToTransactions = { currentScreen = NavigationScreen.TRANSACTIONS }
-                    )
-
-                    NavigationScreen.BUDGETS -> BudgetsScreen(
-                        viewModel = viewModel
-                    )
-
-                    NavigationScreen.AI_ADVISOR -> AiChatScreen(
-                        viewModel = viewModel
-                    )
-
-                    NavigationScreen.AI_TOOLS -> AiToolsScreen(
-                        viewModel = viewModel,
-                        initialTab = aiToolsTab,
-                        onOpenAddExpenseWithPreFill = { extracted ->
-                            expenseToEdit = null
-                            preFillTransaction = extracted
-                            isAddExpenseOpen = true
-                        },
-                        onOpenReceiptScannerScreen = {
-                            currentScreen = NavigationScreen.RECEIPT_SCAN
-                        }
-                    )
-
-                    NavigationScreen.RECEIPT_SCAN -> ReceiptScanScreen(
-                        viewModel = viewModel,
-                        onNavigateBack = { currentScreen = NavigationScreen.DASHBOARD },
-                        onNavigateToTransactions = { currentScreen = NavigationScreen.TRANSACTIONS },
-                        onOpenFullAddExpense = { extracted ->
-                            expenseToEdit = null
-                            preFillTransaction = extracted
-                            isAddExpenseOpen = true
-                        }
-                    )
-
-                    NavigationScreen.REPORTS -> ReportsScreen(
-                        viewModel = viewModel
+                        onOpenSettings = { currentScreen = NavigationScreen.SETTINGS }
                     )
                 }
-
-                // Add / Edit Expense BottomSheet
-                if (isAddExpenseOpen) {
-                    AddEditExpenseBottomSheet(
-                        expenseToEdit = expenseToEdit,
-                        initialPreFill = preFillTransaction,
-                        viewModel = viewModel,
-                        onDismiss = {
-                            isAddExpenseOpen = false
-                            expenseToEdit = null
-                            preFillTransaction = null
-                        }
-                    )
-                }
-
-                // Voice-to-Text Expense Dialog
-                if (isVoiceExpenseDialogOpen) {
-                    VoiceExpenseDialog(
-                        viewModel = viewModel,
-                        onDismiss = { isVoiceExpenseDialogOpen = false },
-                        onExpenseExtracted = { extracted ->
-                            expenseToEdit = null
-                            preFillTransaction = extracted
-                            isAddExpenseOpen = true
-                        }
-                    )
-                }
-
-                // Account Profile & Google Sign-In Bottom Sheet
-                AccountBottomSheet(
-                    viewModel = viewModel,
-                    isOpen = isAccountSheetOpen,
-                    onDismiss = { isAccountSheetOpen = false }
-                )
             }
         }
+    }
+
+    // Modal Add / Edit Expense Sheet
+    if (isAddExpenseOpen) {
+        AddEditExpenseBottomSheet(
+            expenseToEdit = expenseToEdit,
+            initialPreFill = preFillTransaction,
+            viewModel = viewModel,
+            onDismiss = {
+                isAddExpenseOpen = false
+                expenseToEdit = null
+                preFillTransaction = null
+            }
+        )
+    }
+
+    // Voice Expense Dialog
+    if (isVoiceExpenseDialogOpen) {
+        VoiceExpenseDialog(
+            viewModel = viewModel,
+            onDismiss = { isVoiceExpenseDialogOpen = false },
+            onExpenseExtracted = { extracted ->
+                expenseToEdit = null
+                preFillTransaction = extracted
+                isAddExpenseOpen = true
+            }
+        )
+    }
+}
+
+@Composable
+private fun RenderScreen(
+    currentScreen: NavigationScreen,
+    viewModel: ExpenseViewModel,
+    onNavigate: (NavigationScreen) -> Unit,
+    onAddExpense: () -> Unit,
+    onVoiceExpense: () -> Unit,
+    onEditExpense: (ExpenseEntity) -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    when (currentScreen) {
+        NavigationScreen.HOME -> DashboardScreen(
+            viewModel = viewModel,
+            onNavigateToTransactions = { onNavigate(NavigationScreen.LEDGER) },
+            onNavigateToBudgets = { onNavigate(NavigationScreen.BUDGETS) },
+            onNavigateToReceiptScan = { onNavigate(NavigationScreen.RECEIPT_SCAN) },
+            onAddExpenseClick = onAddExpense,
+            onVoiceExpenseClick = onVoiceExpense,
+            onEditExpenseClick = onEditExpense,
+            onOpenSettingsClick = onOpenSettings
+        )
+
+        NavigationScreen.LEDGER -> TransactionsScreen(
+            viewModel = viewModel,
+            onEditExpenseClick = onEditExpense
+        )
+
+        NavigationScreen.INSIGHTS -> AnalyticsScreen(
+            viewModel = viewModel,
+            onNavigateToTransactions = { onNavigate(NavigationScreen.LEDGER) }
+        )
+
+        NavigationScreen.BUDGETS -> BudgetsScreen(
+            viewModel = viewModel
+        )
+
+        NavigationScreen.ASK_AI -> AskAiScreen(
+            viewModel = viewModel,
+            initialTab = 0,
+            onOpenAddExpenseWithPreFill = { extracted ->
+                // Open add expense with AI extracted transaction
+                onAddExpense()
+            },
+            onOpenReceiptScannerScreen = {
+                onNavigate(NavigationScreen.RECEIPT_SCAN)
+            }
+        )
+
+        NavigationScreen.SETTINGS -> SettingsScreen(
+            viewModel = viewModel,
+            onNavigateBack = { onNavigate(NavigationScreen.HOME) }
+        )
+
+        NavigationScreen.RECEIPT_SCAN -> ReceiptScanScreen(
+            viewModel = viewModel,
+            onNavigateBack = { onNavigate(NavigationScreen.HOME) },
+            onNavigateToTransactions = { onNavigate(NavigationScreen.LEDGER) },
+            onOpenFullAddExpense = { extracted ->
+                onAddExpense()
+            }
+        )
     }
 }

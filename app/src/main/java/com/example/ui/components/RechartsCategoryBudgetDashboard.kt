@@ -349,7 +349,7 @@ fun RechartsCategoryBudgetDashboard(
                         Text(
                             text = "${String.format(Locale.getDefault(), "%.0f", report.adherenceRatePercent)}% adherence",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = onSurfaceVariant
                         )
                     }
@@ -381,7 +381,7 @@ fun RechartsCategoryBudgetDashboard(
                         Text(
                             text = if (report.totalVariance >= 0) "+${ExpenseEntity.formatInr(report.totalVariance)} Saved" else "-${ExpenseEntity.formatInr(kotlin.math.abs(report.totalVariance))} Over",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = if (report.totalVariance >= 0) underBudgetGreen else overBudgetRed
                         )
                     }
@@ -410,7 +410,7 @@ fun RechartsCategoryBudgetDashboard(
                         Text(
                             text = "Limit: ${ExpenseEntity.formatInr(report.totalBudget)}",
                             style = MaterialTheme.typography.bodySmall,
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = budgetAmber,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

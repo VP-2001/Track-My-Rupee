@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileOpen
@@ -399,6 +400,97 @@ fun LocalBackupRestoreCard(
                 }
             }
 
+            // 2c. Restore from Google Drive Feature
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = SophisticatedDarkSurfaceDim,
+                border = BorderStroke(1.dp, com.example.ui.theme.SuccessGreen.copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        restoreFilePickerLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                    }
+                    .testTag("restore_from_google_drive_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(com.example.ui.theme.SuccessGreen.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.CloudDownload,
+                                contentDescription = "Restore from Google Drive",
+                                tint = com.example.ui.theme.SuccessGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Restore from Google Drive",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SophisticatedDarkOnSurface
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = com.example.ui.theme.SuccessGreen.copy(alpha = 0.25f)
+                                ) {
+                                    Text(
+                                        text = "Restore .enc",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = com.example.ui.theme.SuccessGreen,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Select an encrypted backup file from your Google Drive to restore ledger",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SophisticatedDarkOnSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = com.example.ui.theme.SuccessGreen.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = "RESTORE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = com.example.ui.theme.SuccessGreen,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Restore from Drive",
+                            tint = com.example.ui.theme.SuccessGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
             // 3. Room DB CSV Ledger Export Feature
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
@@ -437,7 +529,7 @@ fun LocalBackupRestoreCard(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "Export Room DB to CSV",
+                                    text = "Export to CSV",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = SophisticatedDarkOnSurface
@@ -750,13 +842,13 @@ fun LocalBackupRestoreCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.TableChart, contentDescription = null, tint = SophisticatedPrimary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Export Room DB to CSV", fontWeight = FontWeight.Bold)
+                    Text("Export to CSV", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Export all ${allExpenses.size} financial records from the local Room database into a standard RFC-4180 CSV spreadsheet file.",
+                        text = "Export all ${allExpenses.size} financial records into a standard CSV spreadsheet file.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = SophisticatedDarkOnSurface
                     )
@@ -781,19 +873,19 @@ fun LocalBackupRestoreCard(
                                 text = "• ID, Date, Title, Amount (INR), Category, Payment Method, Bank, Credit Card, Tag, Notes",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SophisticatedDarkOnSurfaceVariant,
-                                fontSize = 11.sp
+                                fontSize = 12.sp
                             )
                             Text(
-                                text = "• UTF-8 BOM encoding for seamless Microsoft Excel & Google Sheets compatibility",
+                                text = "• UTF-8 encoding for seamless Microsoft Excel & Google Sheets compatibility",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SophisticatedDarkOnSurfaceVariant,
-                                fontSize = 11.sp
+                                fontSize = 12.sp
                             )
                             Text(
-                                text = "• Full offline extraction directly from Room DB",
+                                text = "• Full offline extraction directly from local storage",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SuccessGreen,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }

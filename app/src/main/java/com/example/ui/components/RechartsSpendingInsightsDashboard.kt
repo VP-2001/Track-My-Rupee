@@ -506,7 +506,7 @@ fun RechartsSpendingInsightsDashboard(
                             style = MaterialTheme.typography.labelSmall,
                             color = SophisticatedDarkOnSurfaceVariant,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 9.sp
+                            fontSize = 12.sp
                         )
                         Text(
                             text = ExpenseEntity.formatInr(totalMonthSpent),
@@ -531,7 +531,7 @@ fun RechartsSpendingInsightsDashboard(
                             style = MaterialTheme.typography.labelSmall,
                             color = SophisticatedDarkOnSurfaceVariant,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 9.sp
+                            fontSize = 12.sp
                         )
                         Text(
                             text = "${categorySummaries.size} Active",
@@ -554,7 +554,7 @@ fun RechartsSpendingInsightsDashboard(
                             style = MaterialTheme.typography.labelSmall,
                             color = SophisticatedDarkOnSurfaceVariant,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 9.sp
+                            fontSize = 12.sp
                         )
                         val topCat = categorySummaries.firstOrNull()
                         Text(
@@ -819,7 +819,7 @@ fun RechartsSpendingInsightsDashboard(
                                             fontWeight = FontWeight.Bold,
                                             color = color,
                                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                            fontSize = 9.sp
+                                            fontSize = 12.sp
                                         )
                                     }
                                 }
@@ -1125,7 +1125,7 @@ fun D3RechartsInteractivePie(
                         text = "TOTAL SPENT",
                         style = MaterialTheme.typography.labelSmall,
                         color = SophisticatedDarkOnSurfaceVariant,
-                        fontSize = 9.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(

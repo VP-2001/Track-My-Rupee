@@ -1042,7 +1042,7 @@ fun AnnualSpendingTrendLineChart(
                     Text(
                         text = pair.first.shortName.take(3),
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = if (isPeak || isSelected) FontWeight.ExtraBold else FontWeight.Normal,
                         color = when {
                             isSelected -> AmberGold
