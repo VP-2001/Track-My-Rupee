@@ -923,15 +923,15 @@ fun OnDeviceMlTab(viewModel: ExpenseViewModel) {
 
     val sampleMerchants = listOf(
         "Swiggy" to "380",
-        "Blinkit" to "520",
+        "D-Mart" to "2450",
+        "WeWork" to "8500",
+        "Uber Cab" to "280",
         "Airtel Wifi" to "1180",
         "Shell Petrol" to "2000",
         "Amazon India" to "1499",
         "Apollo Pharmacy" to "650",
         "Zerodha SIP" to "5000",
-        "Netflix" to "649",
-        "Urban Company" to "899",
-        "Uber Cab" to "280"
+        "Netflix" to "649"
     )
 
     LazyColumn(
@@ -1171,7 +1171,7 @@ fun OnDeviceMlTab(viewModel: ExpenseViewModel) {
                                     Icon(Icons.Default.Bolt, contentDescription = null, tint = com.example.ui.theme.SophisticatedPrimary, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Predicted Category",
+                                        text = "On-Device ML Auto-Selection",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = com.example.ui.theme.SophisticatedDarkOnSurfaceVariant
                                     )
@@ -1190,17 +1190,50 @@ fun OnDeviceMlTab(viewModel: ExpenseViewModel) {
                                 }
                             }
 
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.15f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.5f)),
+                                    modifier = Modifier.weight(1.2f)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text("PREDICTED CATEGORY", style = MaterialTheme.typography.labelSmall, color = com.example.ui.theme.SophisticatedPrimary, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = livePrediction.predictedCategory,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = com.example.ui.theme.SophisticatedDarkOnSurface,
+                                            modifier = Modifier.testTag("ml_sandbox_predicted_category")
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = com.example.ui.theme.SophisticatedSecondary.copy(alpha = 0.15f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SophisticatedSecondary.copy(alpha = 0.5f)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text("PREDICTED TAG", style = MaterialTheme.typography.labelSmall, color = com.example.ui.theme.SophisticatedSecondary, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = livePrediction.predictedTag,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = com.example.ui.theme.SophisticatedDarkOnSurface,
+                                            modifier = Modifier.testTag("ml_sandbox_predicted_tag")
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(6.dp))
-
-                            Text(
-                                text = livePrediction.predictedCategory,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = com.example.ui.theme.SophisticatedDarkOnSurface,
-                                modifier = Modifier.testTag("ml_sandbox_predicted_category")
-                            )
-
-                            Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
                                 text = livePrediction.explanation,

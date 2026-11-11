@@ -158,6 +158,10 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         return onDeviceClassifier.predictCategory(title, amount, notes)
     }
 
+    fun predictTransactionOnDevice(title: String, amount: Double = 0.0, notes: String = ""): MlCategoryPrediction {
+        return onDeviceClassifier.predictTransaction(title, amount, notes)
+    }
+
     fun retrainOnDeviceMlModel() {
         val all = allExpenses.value
         onDeviceClassifier.trainFromHistoricalExpenses(all)

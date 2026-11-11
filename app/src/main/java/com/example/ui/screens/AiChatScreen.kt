@@ -228,7 +228,7 @@ fun AiChatScreen(
                             onDismissRequest = { modelMenuExpanded = false },
                             modifier = Modifier.background(SophisticatedDarkSurface)
                         ) {
-                            GeminiChatModel.values().forEach { model ->
+                            GeminiChatModel.entries.forEach { model ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {

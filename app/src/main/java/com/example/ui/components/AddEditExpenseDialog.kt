@@ -39,7 +39,10 @@ import androidx.compose.material.icons.filled.EventRepeat
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -179,13 +182,27 @@ fun AddEditExpenseBottomSheet(
         }
     }
     var userManuallySelectedCategory by remember { mutableStateOf(expenseToEdit != null) }
+    var userManuallySelectedTag by remember { mutableStateOf(expenseToEdit != null) }
+    var lastShopEvaluated by remember { mutableStateOf(title.trim()) }
     var autoSelectedCategoryMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(onDevicePrediction) {
-        val pred = onDevicePrediction
-        if (pred != null && pred.confidence >= 0.75f && !userManuallySelectedCategory) {
-            selectedCategory = pred.predictedCategory
-            autoSelectedCategoryMessage = "Auto-selected via On-Device ML (${(pred.confidence * 100).toInt()}% match)"
+    // On-Device Machine Learning: Entering shop name automatically selects category and tags!
+    LaunchedEffect(title, amountText, notes) {
+        val clean = title.trim()
+        if (clean.isNotBlank() && clean != lastShopEvaluated) {
+            lastShopEvaluated = clean
+            val amt = amountText.toDoubleOrNull() ?: 0.0
+            val pred = viewModel.predictCategoryOnDevice(clean, amt, notes)
+            if (expenseToEdit == null || !userManuallySelectedCategory) {
+                selectedCategory = pred.predictedCategory
+            }
+            if (expenseToEdit == null || !userManuallySelectedTag) {
+                selectedTag = pred.predictedTag
+            }
+            autoSelectedCategoryMessage = "⚡ ML Pick: ${pred.predictedCategory} • ${pred.predictedTag} (${(pred.confidence * 100).toInt()}% match)"
+        } else if (clean.isEmpty()) {
+            lastShopEvaluated = ""
+            autoSelectedCategoryMessage = null
         }
     }
 
@@ -294,13 +311,13 @@ fun AddEditExpenseBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Title / Merchant Input + AI Category Predictor
+            // Title / Merchant Input + AI Category & Tag Predictor
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Description / Merchant") },
-                    placeholder = { Text("e.g. Swiggy, Blinkit, Petrol, Amazon") },
+                    label = { Text("Shop / Store / Merchant Name") },
+                    placeholder = { Text("e.g. Starbucks, D-Mart, WeWork, Indigo, Apollo...") },
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -313,15 +330,17 @@ fun AddEditExpenseBottomSheet(
                     onClick = {
                         if (title.isNotBlank()) {
                             val amt = amountText.toDoubleOrNull() ?: 0.0
-                            // 1. Check On-Device ML model first before server API
+                            // Check On-Device ML model first before server API
                             val mlPrediction = viewModel.predictCategoryOnDevice(title, amt, notes)
                             if (mlPrediction.isConfident) {
                                 selectedCategory = mlPrediction.predictedCategory
-                                userManuallySelectedCategory = true
-                                autoSelectedCategoryMessage = null
+                                selectedTag = mlPrediction.predictedTag
+                                userManuallySelectedCategory = false
+                                userManuallySelectedTag = false
+                                autoSelectedCategoryMessage = "⚡ Auto-selected '${mlPrediction.predictedCategory}' & '${mlPrediction.predictedTag}' (${(mlPrediction.confidence * 100).toInt()}% match)"
                                 android.widget.Toast.makeText(
                                     context,
-                                    "⚡ Applied '${mlPrediction.predictedCategory}' (${(mlPrediction.confidence * 100).toInt()}% match) via On-Device ML",
+                                    "⚡ Auto-selected '${mlPrediction.predictedCategory}' & '${mlPrediction.predictedTag}' via On-Device ML",
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             } else {
@@ -352,11 +371,42 @@ fun AddEditExpenseBottomSheet(
                     } else {
                         val pred = onDevicePrediction
                         if (pred != null && pred.isConfident) {
-                            Icon(Icons.Default.Bolt, contentDescription = "Auto-Categorize via On-Device ML", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Bolt, contentDescription = "Auto-Categorize & Tag via On-Device ML", tint = MaterialTheme.colorScheme.primary)
                         } else {
                             Icon(Icons.Default.AutoAwesome, contentDescription = "Categorize with Gemini AI", tint = MaterialTheme.colorScheme.secondary)
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Quick Shop Name Samples for Instant ML Prediction
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "Swiggy", "D-Mart", "Uber", "WeWork", "Amazon", "Apollo Pharmacy", "Airtel Wifi", "Shell Petrol"
+                ).forEach { shop ->
+                    AssistChip(
+                        onClick = {
+                            title = shop
+                            userManuallySelectedCategory = false
+                            userManuallySelectedTag = false
+                        },
+                        label = { Text(shop, style = MaterialTheme.typography.labelSmall) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(14.dp), tint = com.example.ui.theme.SophisticatedPrimary)
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = com.example.ui.theme.SophisticatedDarkSurface,
+                            labelColor = com.example.ui.theme.SophisticatedDarkOnSurface
+                        ),
+                        border = BorderStroke(1.dp, com.example.ui.theme.SophisticatedDarkBorder)
+                    )
                 }
             }
 
@@ -423,7 +473,10 @@ fun AddEditExpenseBottomSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 12.dp)
-                            .clickable { selectedCategory = pred.predictedCategory }
+                            .clickable {
+                                selectedCategory = pred.predictedCategory
+                                selectedTag = pred.predictedTag
+                            }
                             .testTag("on_device_ml_suggestion_card")
                     ) {
                         Row(
@@ -458,7 +511,7 @@ fun AddEditExpenseBottomSheet(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            text = pred.predictedCategory,
+                                            text = "${pred.predictedCategory} • ${pred.predictedTag}",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.primary
@@ -490,8 +543,10 @@ fun AddEditExpenseBottomSheet(
                             TextButton(
                                 onClick = {
                                     selectedCategory = pred.predictedCategory
-                                    userManuallySelectedCategory = true
-                                    autoSelectedCategoryMessage = null
+                                    selectedTag = pred.predictedTag
+                                    userManuallySelectedCategory = false
+                                    userManuallySelectedTag = false
+                                    autoSelectedCategoryMessage = "⚡ Applied '${pred.predictedCategory}' & '${pred.predictedTag}' via On-Device ML"
                                 },
                                 modifier = Modifier.testTag("apply_on_device_ml_category_btn")
                             ) {
@@ -502,8 +557,8 @@ fun AddEditExpenseBottomSheet(
                 }
             }
 
-            // Auto-Selected ML Category Pill Banner
-            if (autoSelectedCategoryMessage != null && onDevicePrediction != null && onDevicePrediction!!.confidence >= 0.75f) {
+            // Auto-Selected ML Category & Tag Banner
+            if (autoSelectedCategoryMessage != null && onDevicePrediction != null) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = com.example.ui.theme.SophisticatedPrimary.copy(alpha = 0.18f),
@@ -784,15 +839,38 @@ fun AddEditExpenseBottomSheet(
             Text("Tag", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(6.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Personal", "Work", "Family", "Business").forEach { tag ->
+                listOf("Personal", "Work", "Family", "Business", "Travel").forEach { tag ->
                     val isSelected = selectedTag.equals(tag, ignoreCase = true)
+                    val isMlSuggested = onDevicePrediction != null && onDevicePrediction!!.predictedTag.equals(tag, ignoreCase = true)
                     FilterChip(
                         selected = isSelected,
-                        onClick = { selectedTag = tag },
-                        label = { Text(tag) }
+                        onClick = {
+                            selectedTag = tag
+                            userManuallySelectedTag = true
+                        },
+                        leadingIcon = if (isSelected && isMlSuggested) {
+                            {
+                                Icon(
+                                    Icons.Default.Bolt,
+                                    contentDescription = "ML Auto-Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else null,
+                        label = {
+                            Text(
+                                text = if (isMlSuggested) "$tag ✨" else tag,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (isMlSuggested) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        modifier = Modifier.testTag("tag_chip_${tag.lowercase()}")
                     )
                 }
             }

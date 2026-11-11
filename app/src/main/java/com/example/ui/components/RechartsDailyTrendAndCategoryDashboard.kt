@@ -377,7 +377,7 @@ fun RechartsDailyTrendAndCategoryDashboard(
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                RechartsDashboardTab.values().forEach { tab ->
+                RechartsDashboardTab.entries.forEach { tab ->
                     val isSelected = selectedTab == tab
                     Box(
                         modifier = Modifier

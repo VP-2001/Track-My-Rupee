@@ -198,7 +198,7 @@ fun RechartsBudgetTrendDashboard(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                     ) {
                         Row(modifier = Modifier.padding(2.dp)) {
-                            BudgetTrendHorizon.values().forEach { horizon ->
+                            BudgetTrendHorizon.entries.forEach { horizon ->
                                 val isSelected = selectedHorizon == horizon
                                 Box(
                                     modifier = Modifier
@@ -255,7 +255,7 @@ fun RechartsBudgetTrendDashboard(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 ) {
                     Row(modifier = Modifier.padding(3.dp)) {
-                        BudgetTrendChartMode.values().forEach { mode ->
+                        BudgetTrendChartMode.entries.forEach { mode ->
                             val isSelected = chartMode == mode
                             Box(
                                 modifier = Modifier

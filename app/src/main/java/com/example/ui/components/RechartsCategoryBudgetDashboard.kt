@@ -269,7 +269,7 @@ fun RechartsCategoryBudgetDashboard(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 ) {
                     Row(modifier = Modifier.padding(2.dp)) {
-                        CategoryChartMode.values().forEach { mode ->
+                        CategoryChartMode.entries.forEach { mode ->
                             val isSelected = chartMode == mode
                             Box(
                                 modifier = Modifier
@@ -297,7 +297,7 @@ fun RechartsCategoryBudgetDashboard(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 ) {
                     Row(modifier = Modifier.padding(2.dp)) {
-                        CategoryHealthFilter.values().forEach { filter ->
+                        CategoryHealthFilter.entries.forEach { filter ->
                             val isSelected = healthFilter == filter
                             Box(
                                 modifier = Modifier

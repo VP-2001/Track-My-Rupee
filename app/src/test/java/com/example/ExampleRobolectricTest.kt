@@ -1692,9 +1692,64 @@ class ExampleRobolectricTest {
     val prediction = vm.predictCategoryOnDevice("Zomato Pizza Delivery", 420.0, "Margherita pizza")
     assertTrue(prediction.isConfident)
     assertEquals("Food & Dining", prediction.predictedCategory)
+    assertEquals("Personal", prediction.predictedTag)
 
     val stats = vm.onDeviceMlStats.value
     assertNotNull(stats)
+  }
+
+  @Test
+  fun `onDeviceMlClassifier automatically selects category and tags when entering shop names`() {
+    val classifier = com.example.ml.OnDeviceMlCategoryClassifier()
+
+    // Shop 1: Swiggy -> Food & Dining, Personal
+    val swiggy = classifier.predictCategory("Swiggy", 450.0)
+    assertTrue("Swiggy should be confident", swiggy.isConfident)
+    assertEquals("Food & Dining", swiggy.predictedCategory)
+    assertEquals("Personal", swiggy.predictedTag)
+
+    // Shop 2: D-Mart -> Groceries, Family
+    val dmart = classifier.predictCategory("D-Mart Supermarket", 2450.0)
+    assertTrue("D-Mart should be confident", dmart.isConfident)
+    assertEquals("Groceries", dmart.predictedCategory)
+    assertEquals("Family", dmart.predictedTag)
+
+    // Shop 3: WeWork -> Work tag
+    val wework = classifier.predictCategory("WeWork Coworking Desk", 8500.0)
+    assertEquals("Work", wework.predictedTag)
+
+    // Shop 4: Uber -> Travel & Transport, Travel tag
+    val uber = classifier.predictCategory("Uber Cab", 320.0)
+    assertEquals("Travel & Transport", uber.predictedCategory)
+    assertEquals("Travel", uber.predictedTag)
+
+    // Shop 5: Historical training learns custom shop tag affinity
+    val history = listOf(
+      ExpenseEntity(
+        id = 201,
+        title = "Apex Tech Supplies",
+        amount = 4500.0,
+        category = "Shopping",
+        paymentMethod = "Credit Card",
+        tag = "Work",
+        notes = "Office monitor cables"
+      ),
+      ExpenseEntity(
+        id = 202,
+        title = "Apex Tech Supplies",
+        amount = 1200.0,
+        category = "Shopping",
+        paymentMethod = "Credit Card",
+        tag = "Work",
+        notes = "USB hubs"
+      )
+    )
+    classifier.trainFromHistoricalExpenses(history)
+
+    val apex = classifier.predictCategory("Apex Tech Supplies", 900.0)
+    assertEquals("Shopping", apex.predictedCategory)
+    assertEquals("Work", apex.predictedTag)
+    assertTrue("Should be confident from historical pattern", apex.isConfident && apex.isTagConfident)
   }
 }
 

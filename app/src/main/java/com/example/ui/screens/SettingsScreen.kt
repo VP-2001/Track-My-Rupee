@@ -880,7 +880,7 @@ fun SettingsScreen(
             title = { Text("Choose Theme", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column {
-                    AppThemeMode.values().forEach { mode ->
+                    AppThemeMode.entries.forEach { mode ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
